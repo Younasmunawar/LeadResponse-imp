@@ -434,7 +434,8 @@ form.addEventListener("submit", async (event) => {
     localStorage.setItem("kennyLeadId", currentLeadId);
     form.hidden = true;
     callArea.hidden = false;
-    setStatus("Details saved. Press Start call to hear Kenny's original recordings.");
+    setStatus("Step 1 completed. Press Start call when you are ready.");
+    callArea.scrollIntoView({ behavior: "smooth", block: "center" });
 
     if (!speechRecognitionSupported()) {
       setStatus("Voice recognition is unavailable in this browser. Chrome is recommended; typed fallback will be used.", true);
