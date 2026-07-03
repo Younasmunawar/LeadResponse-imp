@@ -1,0 +1,19 @@
+KENNY ORIGINAL AUDIO BUILD - VERSION 4.0.0
+
+WHAT CHANGED
+- Removed the Vapi synthetic speaking widget from the main customer flow.
+- Added all supplied Kenny MP3 files under public/audio.
+- Added a browser-based recorded-audio state machine.
+- Added Chrome/Edge speech recognition for customer answers.
+- Added typed fallback when speech recognition fails.
+- Added buy and lease branching.
+- Added clarification, acknowledgements, hot/warm/cold outcomes, callback and goodbye audio.
+- Added POST /api/leads/:id/recorded-complete.
+- Added local lead scoring, summary creation, MongoDB completion and Brevo email delivery.
+- Kept the legacy /vapi/webhook route for backward compatibility.
+
+IMPORTANT
+- Use Chrome or Edge for the best speech-recognition support.
+- Browser microphone permission is required.
+- The first live question is the supplied Buy or Lease recording because no separate live-call opening recording was supplied.
+- No voice cloning or synthetic Kenny voice is used.

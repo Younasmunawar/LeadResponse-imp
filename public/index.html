@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Talk to Kenny | Falcon Heights Real Estate</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="micGate" class="mic-gate" role="dialog" aria-modal="true" aria-labelledby="micGateTitle">
+    <div class="mic-gate-card">
+      <div class="mic-icon" aria-hidden="true">🎙️</div>
+      <p class="eyebrow">One quick setup</p>
+      <h2 id="micGateTitle">Enable your microphone</h2>
+      <p id="micGateText">Kenny needs microphone access to understand your answers.</p>
+      <button id="micPermissionButton" class="primary-button" type="button">Enable microphone</button>
+      <p id="micHelp" class="mic-help" hidden></p>
+    </div>
+  </div>
+
+  <header class="site-header">
+    <a class="brand" href="/">Falcon Heights</a>
+    <a class="nav-link" href="/dashboard.html">Lead dashboard</a>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <p class="eyebrow">Dubai property assistance</p>
+      <h1>Tell us what you need, then talk to Kenny.</h1>
+      <p class="hero-copy">This version uses Kenny's original recorded voice for every question and closing.</p>
+    </section>
+
+    <section class="panel">
+      <form id="leadForm" novalidate>
+        <div class="field">
+          <label for="name">Full name</label>
+          <input id="name" name="name" type="text" autocomplete="name" required />
+        </div>
+        <div class="field">
+          <label for="phone">Phone number</label>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="+971..." required />
+        </div>
+        <div class="field">
+          <label for="email">Email <span>(optional)</span></label>
+          <input id="email" name="email" type="email" autocomplete="email" />
+        </div>
+        <div id="micReadyBadge" class="mic-ready-badge" hidden>Microphone ready</div>
+        <button id="submitButton" class="primary-button" type="submit">Continue to voice call</button>
+      </form>
+
+      <section id="callArea" class="call-area" hidden>
+        <div class="call-copy">
+          <p class="eyebrow">Original Kenny audio mode</p>
+          <h2>Recorded voice qualification</h2>
+          <p>Press Start call. Answer after each recorded question.</p>
+        </div>
+
+        <div class="recorded-call-controls">
+          <button id="startCallButton" class="primary-button" type="button">Start call</button>
+          <button id="endCallButton" class="secondary-button" type="button" disabled>End call</button>
+        </div>
+
+        <div id="callState" class="call-state">Ready</div>
+
+        <div id="typedFallback" class="typed-fallback" hidden>
+          <label for="typedAnswer">Type your answer</label>
+          <div class="typed-row">
+            <input id="typedAnswer" type="text" autocomplete="off" />
+            <button id="submitTypedAnswer" class="secondary-button" type="button">Continue</button>
+          </div>
+        </div>
+
+        <div class="transcript-card">
+          <h3>Live call notes</h3>
+          <pre id="liveTranscript">The conversation will appear here.</pre>
+        </div>
+      </section>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

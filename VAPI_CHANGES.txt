@@ -1,0 +1,34 @@
+VAPI CHANGES — REQUIRED
+
+1. Add the built-in End Call tool
+   Assistant > Tools > Add Tool > End Call
+
+   Tool description:
+   End the call only after Kenny has spoken the exact final closing sentence,
+   or when the caller clearly asks to end, says they are not interested, or
+   cannot continue. After using this tool, do not speak again.
+
+2. System prompt: replace the final termination section with:
+
+FINAL CALL TERMINATION
+When the conversation is complete:
+- Say exactly: “Thank you for speaking with Falcon Heights. I’ll end the call now. Goodbye.”
+- Immediately invoke the End Call tool.
+- Do not wait for the caller to reply.
+- Do not produce another message after invoking the tool.
+- Saying the sentence alone is not enough; the End Call tool must be invoked.
+
+3. End Call Phrases
+   Recommended: leave empty.
+   Do not add generic phrases such as thank you, goodbye, take care, or wonderful day.
+
+4. End Call Message
+   Leave blank when using the End Call tool, to avoid a second goodbye.
+
+5. Client Messages
+   Keep transcript enabled (plus status-update, speech-update, hang if desired).
+
+6. Server Messages
+   Keep end-of-call-report enabled.
+
+7. Publish the assistant after every change.
