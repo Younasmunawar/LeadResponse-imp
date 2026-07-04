@@ -448,6 +448,97 @@ function parseAnswer(step, text) {
   return text.trim() || "unknown";
 }
 
+
+async function validateAnswerForStep(step, rawAnswer, attempt, previousAttempts = []) {
+  setCallState(`Checking answer relevance with Gemini (${attempt}/3)...`);
+  const result = await postJson("/api/validate-answer", {
+    questionKey: step.key,
+    questionLabel: step.label,
+    answer: rawAnswer,
+    attempt,
+    previousAttempts
+  });
+  return result.validation;
+}
+
+async function collectValidatedAnswer(step) {
+  const attempts = [];
+
+  for (let attempt = 1; attempt <= 3 && callRunning; attempt += 1) {
+    if (attempt > 1) {
+      addTranscript("Kenny", `Clarification requested for ${step.label}`);
+      await playAudio(AUDIO.clarifier, "Kenny");
+      if (!callRunning) throw new Error("CALL_ENDED");
+      await playAudio(step.audio, "Kenny");
+      if (!callRunning) throw new Error("CALL_ENDED");
+    }
+
+    const rawAnswer = await captureAnswer();
+    if (!callRunning) throw new Error("CALL_ENDED");
+    addTranscript("Customer", rawAnswer);
+
+    const validation = await validateAnswerForStep(
+      step,
+      rawAnswer,
+      attempt,
+      attempts.map((item) => ({
+        answer: item.rawAnswer,
+        relevanceScore: item.relevanceScore,
+        relevant: item.relevant
+      }))
+    );
+
+    const candidate = {
+      rawAnswer,
+      relevant: validation.relevant === true,
+      relevanceScore: Number(validation.relevanceScore) || 0,
+      normalizedAnswer: String(validation.normalizedAnswer || rawAnswer).trim() || "unknown",
+      reason: String(validation.reason || "")
+    };
+    attempts.push(candidate);
+
+    addTranscript(
+      "System",
+      `${step.label} validation: ${candidate.relevant ? "relevant" : "not relevant"} (${candidate.relevanceScore}/100)`
+    );
+
+    if (candidate.relevant) {
+      return {
+        value: parseAnswer(step, candidate.normalizedAnswer),
+        rawAnswer: candidate.rawAnswer,
+        validation: candidate,
+        attempts,
+        forcedClosestMatch: false
+      };
+    }
+
+    if (attempt < 3) {
+      setStatus(`That answer did not match the ${step.label.toLowerCase()} question. Kenny will clarify and ask again.`);
+    }
+  }
+
+  const closest = attempts.sort((a, b) => b.relevanceScore - a.relevanceScore)[0] || {
+    rawAnswer: "unknown",
+    normalizedAnswer: "unknown",
+    relevanceScore: 0,
+    relevant: false,
+    reason: "No usable answer"
+  };
+
+  addTranscript(
+    "System",
+    `${step.label}: three attempts were not relevant. Closest answer selected (${closest.relevanceScore}/100): ${closest.normalizedAnswer}`
+  );
+
+  return {
+    value: parseAnswer(step, closest.normalizedAnswer),
+    rawAnswer: closest.rawAnswer,
+    validation: closest,
+    attempts,
+    forcedClosestMatch: true
+  };
+}
+
 function isValidAnswer(step, parsed) {
   if (["intent", "paymentMethod", "whatsappConsent"].includes(step.key)) return parsed !== "unknown";
   return String(parsed || "").trim().length >= 2;
@@ -477,14 +568,15 @@ function isMeaningfulAnswer(value) {
 
 function calculateLeadScore() {
   // Property type and follow-up time are deliberately excluded.
+  const validated = (key) => answers?._validation?.[key]?.forcedClosestMatch !== true;
   const checks = [
-    ["intent", ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
-    ["purpose", isMeaningfulAnswer(answers.purpose)],
-    ["preferredArea", isMeaningfulAnswer(answers.preferredArea)],
-    ["budget", isMeaningfulAnswer(answers.budget)],
-    ["timeline", isMeaningfulAnswer(answers.timeline)],
-    ["paymentMethod", ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
-    ["whatsappConsent", String(answers.whatsappConsent || "").toLowerCase() === "yes"]
+    ["intent", validated("intent") && ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
+    ["purpose", validated("purpose") && isMeaningfulAnswer(answers.purpose)],
+    ["preferredArea", validated("preferredArea") && isMeaningfulAnswer(answers.preferredArea)],
+    ["budget", validated("budget") && isMeaningfulAnswer(answers.budget)],
+    ["timeline", validated("timeline") && isMeaningfulAnswer(answers.timeline)],
+    ["paymentMethod", validated("paymentMethod") && ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
+    ["whatsappConsent", validated("whatsappConsent") && String(answers.whatsappConsent || "").toLowerCase() === "yes"]
   ];
 
   const applicable = checks.filter(([key]) => !(key === "paymentMethod" && answers.intent === "lease"));
@@ -531,23 +623,15 @@ async function runConversation() {
     await playAudio(AUDIO.opening);
     if (!callRunning) return;
 
-    const consentStep = { key: "consent", label: "Permission to continue" };
-    let consentRaw = await captureAnswer();
-    addTranscript("Customer", consentRaw);
-    let consent = normalizeConsent(consentRaw);
-
-    if (consent === "unknown" && callRunning) {
-      await playAudio(AUDIO.clarifier);
-      if (!callRunning) return;
-      consentRaw = await captureAnswer();
-      addTranscript("Customer", consentRaw);
-      consent = normalizeConsent(consentRaw);
-    }
-
+    const consentStep = { key: "consent", audio: AUDIO.opening, label: "Permission to continue" };
+    const consentResult = await collectValidatedAnswer(consentStep);
+    const consent = normalizeConsent(consentResult.value);
     answers.consent = consent;
+    answers._validation = answers._validation || {};
+    answers._validation.consent = consentResult;
 
     if (consent !== "yes") {
-      await finishDeclinedCall(consent === "no" ? "Customer declined to continue." : "Customer did not confirm consent.");
+      await finishDeclinedCall(consent === "no" ? "Customer declined to continue." : "Customer did not confirm consent after three attempts.");
       return;
     }
 
@@ -560,26 +644,20 @@ async function runConversation() {
       await playAudio(step.audio);
       if (!callRunning) return;
 
-      const rawAnswer = await captureAnswer();
+      const answerResult = await collectValidatedAnswer(step);
       if (!callRunning) return;
 
-      addTranscript("Customer", rawAnswer);
-      const parsed = parseAnswer(step, rawAnswer);
+      answers[step.key] = answerResult.value;
+      answers._validation = answers._validation || {};
+      answers._validation[step.key] = answerResult;
 
-      if (!isValidAnswer(step, parsed)) {
-        await playAudio(AUDIO.clarifier);
+      if (!answerResult.forcedClosestMatch) {
+        await playAudio(acknowledgementFor(activeStepIndex), "Kenny");
         if (!callRunning) return;
-        const secondAnswer = await captureAnswer();
-        if (!callRunning) return;
-        addTranscript("Customer", secondAnswer);
-        const secondParsed = parseAnswer(step, secondAnswer);
-        answers[step.key] = isValidAnswer(step, secondParsed) ? secondParsed : "unknown";
       } else {
-        answers[step.key] = parsed;
+        setStatus(`Three answers did not clearly match ${step.label.toLowerCase()}. The closest answer was saved and the call continued.`);
       }
 
-      await playAudio(acknowledgementFor(activeStepIndex), "Kenny");
-      if (!callRunning) return;
       activeStepIndex += 1;
     }
 

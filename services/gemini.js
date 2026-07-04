@@ -224,3 +224,101 @@ export async function analyzeLeadWithGemini({
 
   throw new Error(`Gemini analysis failed: ${lastError?.message || "Unknown error"}`);
 }
+
+
+const validationResponseSchema = {
+  type: "object",
+  properties: {
+    relevant: { type: "boolean" },
+    relevance_score: { type: "integer", minimum: 0, maximum: 100 },
+    normalized_answer: { type: "string" },
+    short_reason: { type: "string" }
+  },
+  required: ["relevant", "relevance_score", "normalized_answer", "short_reason"]
+};
+
+const QUESTION_EXPECTATIONS = {
+  consent: "A clear yes/no response about whether this is a good time to continue the call.",
+  intent: "Whether the customer wants to buy/purchase or lease/rent a property.",
+  purpose: "The purpose: personal use, family use, business use, or investment.",
+  preferredArea: "A Dubai area/location, or a clear statement that the customer is open to suggestions/any area.",
+  budget: "A budget amount/range and preferably currency, or a clear refusal/uncertainty about budget.",
+  timeline: "A time frame such as immediately, this month, within weeks/months, later, or a specific date.",
+  paymentMethod: "For a purchase: cash or finance/mortgage/loan.",
+  whatsappConsent: "Whether the submitted phone number is suitable for WhatsApp, another number, or a clear yes/no response."
+};
+
+function buildValidationPrompt({ questionKey, questionLabel, answer, attempt = 1, previousAttempts = [] }) {
+  const expectation = QUESTION_EXPECTATIONS[questionKey] || "An answer directly related to the question.";
+  return `You validate one answer in a Dubai real-estate qualification call.
+
+QUESTION KEY: ${safeText(questionKey)}
+QUESTION: ${safeText(questionLabel)}
+EXPECTED INFORMATION: ${expectation}
+CURRENT ANSWER: ${safeText(answer, "")}
+ATTEMPT NUMBER: ${attempt}
+PREVIOUS ATTEMPTS: ${JSON.stringify(previousAttempts || [])}
+
+Return only JSON matching the schema.
+
+RULES:
+1. relevant=true only when the answer directly provides or clearly refuses the requested information.
+2. Do not accept unrelated phrases merely because they are grammatical. For example, "Google translator" is not a timeline.
+3. A refusal such as "I don't know", "no budget yet", or "open to suggestions" can be relevant when it directly answers that question.
+4. relevance_score is 0-100 and must represent closeness to the requested information.
+5. normalized_answer should preserve the user's meaning while cleaning obvious speech-recognition noise.
+6. For intent normalize to buy, lease, or unknown.
+7. For purpose normalize to personal, family, business, investment, or unknown.
+8. For payment normalize to cash, finance, or unknown.
+9. For consent/WhatsApp normalize clear confirmations to yes and clear refusals to no; preserve a supplied phone number.
+10. If irrelevant, still provide the closest concise interpretation in normalized_answer, or "unknown" if none.
+11. Never invent details.`;
+}
+
+export async function validateAnswerWithGemini({
+  questionKey,
+  questionLabel,
+  answer,
+  attempt = 1,
+  previousAttempts = []
+}) {
+  const apiKey = requiredEnv("GEMINI_API_KEY");
+  const model = String(process.env.GEMINI_MODEL || "gemini-2.5-flash").trim();
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+  const requestBody = {
+    contents: [{ role: "user", parts: [{ text: buildValidationPrompt({ questionKey, questionLabel, answer, attempt, previousAttempts }) }] }],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: "application/json",
+      responseSchema: validationResponseSchema
+    }
+  };
+
+  const timeout = createTimeoutController(15000);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify(requestBody),
+      signal: timeout.controller.signal
+    });
+    const rawBody = await response.text();
+    let payload = {};
+    try { payload = rawBody ? JSON.parse(rawBody) : {}; } catch { payload = { rawBody }; }
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Gemini returned HTTP ${response.status}`);
+    }
+    const responseText = extractResponseText(payload);
+    if (!responseText) throw new Error("Gemini returned an empty validation response.");
+    const result = JSON.parse(responseText);
+    return {
+      relevant: result.relevant === true,
+      relevanceScore: Math.max(0, Math.min(100, Number(result.relevance_score) || 0)),
+      normalizedAnswer: safeText(result.normalized_answer),
+      reason: safeText(result.short_reason, "No reason provided"),
+      model
+    };
+  } finally {
+    timeout.clear();
+  }
+}

@@ -73,3 +73,7 @@ Lead quality is now calculated by completed qualification answers, not by Gemini
 - fewer than 4: **cold**
 
 Property type and follow-up time are excluded from scoring. The dashboard automatically recalculates older Gemini records when opened. It also includes per-lead delete controls and CSV export.
+
+## Per-question Gemini relevance validation (v11)
+
+Every opening/qualification answer is validated by Gemini before the flow advances. A relevant answer receives the normal acknowledgement and the next question. An unrelated answer triggers the clarification recording and the same question again. After three unsuccessful attempts, the closest attempt is stored with low-confidence metadata, does not count as a positive scoring answer, and the flow moves on.

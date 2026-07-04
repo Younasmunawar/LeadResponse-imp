@@ -7,7 +7,7 @@ import mongoose from "mongoose";
 
 import Lead from "./models/Lead.js";
 import { sendLeadEmail } from "./services/email.js";
-import { analyzeLeadWithGemini } from "./services/gemini.js";
+import { analyzeLeadWithGemini, validateAnswerWithGemini } from "./services/gemini.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -55,14 +55,17 @@ function calculateQualificationScore(answers = {}, declinedAtOpening = false) {
   }
 
   // Property type and follow-up time are intentionally excluded.
+  // An answer selected only as the closest of three irrelevant attempts is stored,
+  // but it does not count as a positive qualification answer.
+  const validated = (key) => answers?._validation?.[key]?.forcedClosestMatch !== true;
   const checks = [
-    ["intent", ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
-    ["purpose", isMeaningfulAnswer(answers.purpose)],
-    ["preferredArea", isMeaningfulAnswer(answers.preferredArea)],
-    ["budget", isMeaningfulAnswer(answers.budget)],
-    ["timeline", isMeaningfulAnswer(answers.timeline)],
-    ["paymentMethod", ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
-    ["whatsappConsent", String(answers.whatsappConsent || "").toLowerCase() === "yes"]
+    ["intent", validated("intent") && ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
+    ["purpose", validated("purpose") && isMeaningfulAnswer(answers.purpose)],
+    ["preferredArea", validated("preferredArea") && isMeaningfulAnswer(answers.preferredArea)],
+    ["budget", validated("budget") && isMeaningfulAnswer(answers.budget)],
+    ["timeline", validated("timeline") && isMeaningfulAnswer(answers.timeline)],
+    ["paymentMethod", validated("paymentMethod") && ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
+    ["whatsappConsent", validated("whatsappConsent") && String(answers.whatsappConsent || "").toLowerCase() === "yes"]
   ];
 
   // Payment is not asked for lease leads, so it is not part of the possible count.
@@ -250,6 +253,63 @@ async function sendEmailIfNeeded(lead) {
     await lead.save();
   }
 }
+
+
+
+function fallbackAnswerValidation(questionKey, answer) {
+  const text = String(answer || "").trim();
+  const lower = text.toLowerCase();
+  let relevant = false;
+
+  if (questionKey === "consent" || questionKey === "whatsappConsent") {
+    relevant = /\b(yes|yeah|yep|sure|okay|ok|of course|no|nope|nah|not now|stop|another number)\b/.test(lower) || /\+?\d[\d\s-]{6,}/.test(text);
+  } else if (questionKey === "intent") {
+    relevant = /\b(buy|purchase|lease|rent)\b/.test(lower);
+  } else if (questionKey === "purpose") {
+    relevant = /\b(personal|myself|live|family|business|office|commercial|invest|investment)\b/.test(lower);
+  } else if (questionKey === "preferredArea") {
+    relevant = /\b(area|dubai|bay|marina|downtown|jvc|jlt|palm|creek|hills|ranch|suggest|anywhere|any area|open)\b/.test(lower);
+  } else if (questionKey === "budget") {
+    relevant = /\d/.test(text) || /\b(aed|dirham|million|thousand|budget|unsure|don't know|no budget)\b/.test(lower);
+  } else if (questionKey === "timeline") {
+    relevant = /\b(today|tomorrow|immediately|asap|soon|week|weeks|month|months|year|years|later|date|quarter|ready now)\b/.test(lower) || /\d/.test(text);
+  } else if (questionKey === "paymentMethod") {
+    relevant = /\b(cash|finance|mortgage|loan|installment|instalment)\b/.test(lower);
+  }
+
+  return {
+    relevant,
+    relevanceScore: relevant ? 70 : 10,
+    normalizedAnswer: text || "unknown",
+    reason: "Local fallback validation was used.",
+    fallback: true
+  };
+}
+
+app.post("/api/validate-answer", async (req, res) => {
+  const { questionKey, questionLabel, answer, attempt, previousAttempts } = req.body || {};
+  if (!questionKey || !answer) {
+    return res.status(400).json({ success: false, message: "questionKey and answer are required." });
+  }
+
+  try {
+    const validation = await validateAnswerWithGemini({
+      questionKey: String(questionKey),
+      questionLabel: String(questionLabel || questionKey),
+      answer: String(answer),
+      attempt: Number(attempt) || 1,
+      previousAttempts: Array.isArray(previousAttempts) ? previousAttempts : []
+    });
+    return res.json({ success: true, validation });
+  } catch (error) {
+    console.error("GEMINI_ANSWER_VALIDATION_FAILED:", error.message);
+    return res.json({
+      success: true,
+      validation: fallbackAnswerValidation(String(questionKey), String(answer)),
+      warning: "Gemini validation failed; conservative local fallback was used."
+    });
+  }
+});
 
 app.get("/health", (_req, res) => {
   res.json({
