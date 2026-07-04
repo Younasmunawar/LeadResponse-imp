@@ -48,7 +48,6 @@ const AUDIO = {
   ackHelpful: "/audio/07-ack-helpful.mp3",
   ackThanks: "/audio/08-ack-understood-thank-you.mp3",
   ackUnderstood: "/audio/09-quick-ack-understood.mp3",
-  wonderful: "/audio/10-glue-wonderful.mp3",
   sorryClarifier: "/audio/11-glue-sorry-clarifier.mp3",
   clarifier: "/audio/12-glue-clarifier.mp3",
   hot: "/audio/13-outcome-hot.mp3",
@@ -449,6 +448,20 @@ function parseAnswer(step, text) {
 }
 
 
+function isRepeatQuestionRequest(text) {
+  const normalized = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /\b(please repeat|repeat the question|repeat question|say that again|can you repeat|could you repeat|what was the question|ask again|pardon|come again)\b/.test(normalized);
+}
+
+function clarificationAudioFor(attempt) {
+  return attempt % 2 === 0 ? AUDIO.sorryClarifier : AUDIO.clarifier;
+}
+
 async function validateAnswerForStep(step, rawAnswer, attempt, previousAttempts = []) {
   setCallState(`Checking answer relevance with Gemini (${attempt}/3)...`);
   const result = await postJson("/api/validate-answer", {
@@ -466,16 +479,24 @@ async function collectValidatedAnswer(step) {
 
   for (let attempt = 1; attempt <= 3 && callRunning; attempt += 1) {
     if (attempt > 1) {
+      const clarificationAudio = clarificationAudioFor(attempt);
       addTranscript("Kenny", `Clarification requested for ${step.label}`);
-      await playAudio(AUDIO.clarifier, "Kenny");
-      if (!callRunning) throw new Error("CALL_ENDED");
-      await playAudio(step.audio, "Kenny");
+      await playAudio(clarificationAudio, "Kenny");
       if (!callRunning) throw new Error("CALL_ENDED");
     }
 
-    const rawAnswer = await captureAnswer();
+    let rawAnswer = await captureAnswer();
     if (!callRunning) throw new Error("CALL_ENDED");
     addTranscript("Customer", rawAnswer);
+
+    if (isRepeatQuestionRequest(rawAnswer)) {
+      addTranscript("System", `${step.label}: customer requested the question again.`);
+      await playAudio(step.audio, "Kenny");
+      if (!callRunning) throw new Error("CALL_ENDED");
+      rawAnswer = await captureAnswer();
+      if (!callRunning) throw new Error("CALL_ENDED");
+      addTranscript("Customer", rawAnswer);
+    }
 
     const validation = await validateAnswerForStep(
       step,
@@ -549,7 +570,7 @@ function currentSteps() {
 }
 
 function acknowledgementFor(index) {
-  return [AUDIO.ackPerfect, AUDIO.ackHelpful, AUDIO.ackThanks, AUDIO.ackUnderstood, AUDIO.wonderful][index % 5];
+  return [AUDIO.ackPerfect, AUDIO.ackHelpful, AUDIO.ackThanks, AUDIO.ackUnderstood][index % 4];
 }
 
 function isMeaningfulAnswer(value) {
@@ -710,22 +731,45 @@ async function finishDeclinedCall(reason) {
 async function finishRecordedCall(offScript = false) {
   if (finalizing) return;
   finalizing = true;
-  callRunning = false;
   cancelPendingAnswer();
   const leadQuality = calculateLeadQuality();
 
   try {
     if (offScript) {
       await playAudio(AUDIO.offScript, "Kenny", { allowWhenStopped: true });
+    } else if (leadQuality === "hot") {
+      addTranscript("Kenny", "Hot lead outcome and preferred follow-up time");
+      await playAudio(AUDIO.hot, "Kenny", { allowWhenStopped: true });
+
+      if (!manualEndRequested) {
+        // The hot outcome recording itself asks the customer for a preferred follow-up time.
+        // Keep the call active so an answer can be collected and validated.
+        callRunning = true;
+        const followUpStep = {
+          key: "followUpTime",
+          audio: AUDIO.hot,
+          label: "Preferred follow-up time"
+        };
+        const followUpResult = await collectValidatedAnswer(followUpStep);
+        answers.followUpTime = followUpResult.value;
+        answers._validation = answers._validation || {};
+        answers._validation.followUpTime = followUpResult;
+        addTranscript("System", `Preferred follow-up time saved: ${followUpResult.value}`);
+        callRunning = false;
+      }
     } else {
       await playAudio(AUDIO[leadQuality], "Kenny", { allowWhenStopped: true });
-      if (!manualEndRequested) await playAudio(AUDIO.callback, "Kenny", { allowWhenStopped: true });
     }
+
+    if (!manualEndRequested) await playAudio(AUDIO.callback, "Kenny", { allowWhenStopped: true });
     if (!manualEndRequested) await playAudio(AUDIO.goodbye, "Kenny", { allowWhenStopped: true });
   } catch (error) {
-    console.warn("Closing audio error:", error.message);
+    if (error.message !== "CALL_ENDED") {
+      console.warn("Closing audio error:", error.message);
+    }
   }
 
+  callRunning = false;
   if (manualEndRequested) return;
   setCallState("Call complete. Saving the lead...");
 

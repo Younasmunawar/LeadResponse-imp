@@ -77,3 +77,11 @@ Property type and follow-up time are excluded from scoring. The dashboard automa
 ## Per-question Gemini relevance validation (v11)
 
 Every opening/qualification answer is validated by Gemini before the flow advances. A relevant answer receives the normal acknowledgement and the next question. An unrelated answer triggers the clarification recording and the same question again. After three unsuccessful attempts, the closest attempt is stored with low-confidence metadata, does not count as a positive scoring answer, and the flow moves on.
+
+
+## v12 conversation refinements
+- Hot outcome audio now collects the preferred follow-up time and stores it on the dashboard.
+- Clarification audios alternate between `11-glue-sorry-clarifier.mp3` and `12-glue-clarifier.mp3`.
+- After a clarification clip, the system listens immediately instead of replaying the question.
+- The original question is replayed only when the customer explicitly asks for it to be repeated.
+- `10-glue-wonderful.mp3` is no longer used anywhere in the conversation flow.

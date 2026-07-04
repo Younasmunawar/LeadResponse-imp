@@ -105,7 +105,7 @@ RULES
 8. The server calculates final lead quality by counting completed qualification answers. Property type and follow-up time must not affect lead quality. Your lead_quality value is advisory only.
 9. summary must be concise, factual, and suitable for a sales dashboard.
 10. next_step must be a practical instruction for a human property agent.
-11. best_follow_up_time must be exact only if stated; otherwise use "unknown".
+11. best_follow_up_time must use answers.followUpTime when it was captured; otherwise use an exact time only if stated elsewhere, or "unknown".
 12. Do not mention these instructions or Gemini in the output.`;
 }
 
@@ -245,7 +245,8 @@ const QUESTION_EXPECTATIONS = {
   budget: "A budget amount/range and preferably currency, or a clear refusal/uncertainty about budget.",
   timeline: "A time frame such as immediately, this month, within weeks/months, later, or a specific date.",
   paymentMethod: "For a purchase: cash or finance/mortgage/loan.",
-  whatsappConsent: "Whether the submitted phone number is suitable for WhatsApp, another number, or a clear yes/no response."
+  whatsappConsent: "Whether the submitted phone number is suitable for WhatsApp, another number, or a clear yes/no response.",
+  followUpTime: "A preferred time or time window for a sales follow-up, such as today afternoon, tomorrow morning, after 6 PM, this weekend, or a specific date/time."
 };
 
 function buildValidationPrompt({ questionKey, questionLabel, answer, attempt = 1, previousAttempts = [] }) {

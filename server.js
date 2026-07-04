@@ -470,7 +470,7 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
       );
       lead.summary = String(data.summary || "No summary generated.").trim();
       lead.nextStep = String(data.next_step || "Review the lead manually.").trim();
-      lead.bestFollowUpTime = String(data.best_follow_up_time || "unknown").trim();
+      lead.bestFollowUpTime = String(answers.followUpTime || data.best_follow_up_time || "unknown").trim();
       lead.status = "completed";
       lead.processingError = "";
       lead.rawStructuredOutput = {
@@ -522,7 +522,9 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
       lead.nextStep = declinedAtOpening
         ? "Customer declined the qualification at the opening. Follow up only if appropriate."
         : "Gemini analysis was unavailable. Review the transcript and contact the lead manually.";
-      lead.bestFollowUpTime = declinedAtOpening ? "Do not call automatically" : "unknown";
+      lead.bestFollowUpTime = declinedAtOpening
+        ? "Do not call automatically"
+        : String(answers.followUpTime || "unknown").trim();
       lead.status = "completed";
       lead.processingError = `Gemini analysis failed; local fallback saved: ${geminiError.message}`;
       lead.rawStructuredOutput = {

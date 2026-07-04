@@ -36,6 +36,7 @@ function leadCard(lead) {
     ["Timeline", lead.timeline],
     ["Payment", lead.paymentMethod],
     ["WhatsApp", lead.whatsappNumber],
+    ["Follow-up time", lead.bestFollowUpTime],
     ["Positive answers", scoreText],
     ["Sentiment", lead.callerSentiment],
     ["Status", lead.status],
