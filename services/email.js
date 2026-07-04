@@ -104,7 +104,7 @@ function buildEmailHtml(lead) {
           </h1>
 
           <p style="margin:0 0 24px 0;color:#6b7280">
-            Vapi structured analysis is complete.
+            Gemini lead analysis is complete.
           </p>
 
           <table

@@ -1,13 +1,13 @@
 {
-  "name": "kenny-original-recordings-agent",
-  "version": "4.0.0",
-  "description": "Browser lead qualification agent using Kenny's original MP3 recordings, browser speech recognition, MongoDB, and Brevo.",
+  "name": "kenny-original-voice-gemini-agent",
+  "version": "7.0.0",
+  "description": "Kenny's original prerecorded voice lead agent with Gemini structured analysis, MongoDB, and Brevo.",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check services/email.js"
+    "check": "node --check server.js && node --check public/app.js && node --check services/email.js && node --check services/gemini.js"
   },
   "engines": {
     "node": ">=20 <23"

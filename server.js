@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 
 import Lead from "./models/Lead.js";
 import { sendLeadEmail } from "./services/email.js";
+import { analyzeLeadWithGemini } from "./services/gemini.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -207,6 +208,8 @@ app.get("/health", (_req, res) => {
     emailConfigured: Boolean(
       process.env.BREVO_API_KEY && process.env.EMAIL_FROM && process.env.EMAIL_TO
     ),
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     time: new Date().toISOString()
   });
 });
@@ -301,78 +304,140 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
     }
 
     const answers = req.body?.answers || {};
+    const transcript = String(req.body?.transcript || "").trim();
+    const declinedAtOpening = req.body?.declinedAtOpening === true;
 
-    lead.intent = normalizeEnum(answers.intent, ["buy", "lease", "unknown"]);
-    lead.purpose = normalizeEnum(answers.purpose, [
-      "personal",
-      "family",
-      "business",
-      "investment",
-      "unknown"
-    ]);
-    lead.preferredArea = String(answers.preferredArea || "unknown").trim();
-    lead.budget = String(answers.budget || "unknown").trim();
-    lead.timeline = String(answers.timeline || "unknown").trim();
-    lead.paymentMethod = normalizeEnum(answers.paymentMethod, [
-      "cash",
-      "finance",
-      "unknown"
-    ]);
-    lead.leadQuality = normalizeEnum(
-      req.body?.leadQuality,
-      ["hot", "warm", "cold"],
-      "warm"
-    );
-    lead.callerSentiment = normalizeEnum(
-      req.body?.callerSentiment,
-      ["positive", "neutral", "negative", "busy", "unknown"],
-      "neutral"
-    );
-    lead.transcript = String(req.body?.transcript || "").trim();
-    lead.summary = buildRecordedSummary(lead);
-    lead.nextStep =
-      lead.leadQuality === "hot"
-        ? "Contact the customer as soon as possible with matching Dubai property options."
-        : lead.leadQuality === "warm"
-          ? "Follow up with suitable options and confirm the remaining requirements."
-          : "Add the customer to the follow-up list and confirm interest before assigning an agent.";
-    lead.bestFollowUpTime = "Confirm directly with the customer";
-    lead.whatsappNumber =
-      answers.whatsappConsent === "yes"
-        ? (lead.phone || "unknown")
-        : answers.whatsappConsent === "no"
-          ? "not confirmed"
-          : (lead.phone || "unknown");
-
-    if (req.body?.declinedAtOpening === true) {
-      lead.nextStep = "Customer declined the recorded qualification at the opening. Follow up only if appropriate.";
-      lead.bestFollowUpTime = "Do not call automatically";
-    }
-    lead.status = "completed";
     lead.callEndedAt = new Date();
+    lead.transcript = transcript;
+    lead.status = "awaiting_analysis";
+    lead.sourceMode = "original_recordings_gemini";
     lead.processingError = "";
-    lead.sourceMode = "original_recordings";
-    lead.rawStructuredOutput = {
-      source: "browser-recorded-flow",
-      answers,
-      lead_quality: lead.leadQuality
-    };
+    await lead.save();
+
+    let geminiResult;
+
+    try {
+      geminiResult = await analyzeLeadWithGemini({
+        lead,
+        transcript,
+        answers,
+        declinedAtOpening
+      });
+
+      const data = geminiResult.analysis || {};
+
+      lead.intent = normalizeEnum(data.intent, ["buy", "lease", "unknown"]);
+      lead.purpose = normalizeEnum(data.purpose, [
+        "personal",
+        "family",
+        "business",
+        "investment",
+        "unknown"
+      ]);
+      lead.propertyType = String(data.property_type || "unknown").trim();
+      lead.preferredArea = String(data.preferred_area || "unknown").trim();
+      lead.budget = String(data.budget || "unknown").trim();
+      lead.timeline = String(data.timeline || "unknown").trim();
+      lead.paymentMethod = normalizeEnum(data.payment_method, [
+        "cash",
+        "finance",
+        "not_applicable",
+        "unknown"
+      ]);
+      lead.whatsappNumber = String(data.whatsapp_number || "unknown").trim();
+      lead.leadQuality = normalizeEnum(
+        data.lead_quality,
+        ["hot", "warm", "cold"],
+        "warm"
+      );
+      lead.callerSentiment = normalizeEnum(
+        data.caller_sentiment,
+        ["positive", "neutral", "negative", "busy", "unknown"],
+        "unknown"
+      );
+      lead.summary = String(data.summary || "No summary generated.").trim();
+      lead.nextStep = String(data.next_step || "Review the lead manually.").trim();
+      lead.bestFollowUpTime = String(data.best_follow_up_time || "unknown").trim();
+      lead.status = "completed";
+      lead.processingError = "";
+      lead.rawStructuredOutput = {
+        source: "gemini",
+        model: geminiResult.model,
+        finishReason: geminiResult.finishReason,
+        usageMetadata: geminiResult.usageMetadata,
+        answers,
+        analysis: data
+      };
+    } catch (geminiError) {
+      console.error("Recorded flow Gemini error:", geminiError.stack || geminiError.message);
+
+      // Preserve the lead even when Gemini is unavailable. This fallback keeps
+      // the customer response and allows a human to review it from the dashboard.
+      lead.intent = normalizeEnum(answers.intent, ["buy", "lease", "unknown"]);
+      lead.purpose = normalizeEnum(answers.purpose, [
+        "personal",
+        "family",
+        "business",
+        "investment",
+        "unknown"
+      ]);
+      lead.preferredArea = String(answers.preferredArea || "unknown").trim();
+      lead.budget = String(answers.budget || "unknown").trim();
+      lead.timeline = String(answers.timeline || "unknown").trim();
+      lead.paymentMethod = normalizeEnum(answers.paymentMethod, [
+        "cash",
+        "finance",
+        "unknown"
+      ]);
+      lead.whatsappNumber =
+        answers.whatsappConsent === "yes"
+          ? (lead.phone || "unknown")
+          : answers.whatsappConsent === "no"
+            ? "not confirmed"
+            : "unknown";
+      lead.leadQuality = normalizeEnum(
+        req.body?.leadQuality,
+        ["hot", "warm", "cold"],
+        declinedAtOpening ? "cold" : "warm"
+      );
+      lead.callerSentiment = normalizeEnum(
+        req.body?.callerSentiment,
+        ["positive", "neutral", "negative", "busy", "unknown"],
+        declinedAtOpening ? "negative" : "neutral"
+      );
+      lead.summary = buildRecordedSummary(lead);
+      lead.nextStep = declinedAtOpening
+        ? "Customer declined the qualification at the opening. Follow up only if appropriate."
+        : "Gemini analysis was unavailable. Review the transcript and contact the lead manually.";
+      lead.bestFollowUpTime = declinedAtOpening ? "Do not call automatically" : "unknown";
+      lead.status = "completed";
+      lead.processingError = `Gemini analysis failed; local fallback saved: ${geminiError.message}`;
+      lead.rawStructuredOutput = {
+        source: "local-fallback",
+        answers,
+        geminiError: geminiError.message
+      };
+    }
 
     await lead.save();
     await sendEmailIfNeeded(lead);
 
+    const analysisProvider = lead.rawStructuredOutput?.source || "unknown";
+    const analysisLabel = analysisProvider === "gemini" ? "Gemini analysis" : "fallback analysis";
+
     res.json({
       success: true,
+      analysisProvider,
       message: lead.emailSent
-        ? "Call complete. Lead saved and email sent."
-        : "Call complete. Lead saved; check email configuration if no email arrived.",
+        ? `Call complete. ${analysisLabel} saved and email sent.`
+        : `Call complete. ${analysisLabel} saved; check email configuration if no email arrived.`,
       lead
     });
   } catch (error) {
     console.error("Recorded flow completion error:", error.stack || error.message);
     res.status(500).json({
       success: false,
-      message: "Unable to save the recorded voice call."
+      message: "Unable to save or analyze the recorded voice call."
     });
   }
 });

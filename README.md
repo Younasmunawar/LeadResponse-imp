@@ -1,55 +1,58 @@
-# Kenny Original-Voice Lead Agent
+# Kenny Original Voice Agent + Gemini Analysis
 
-This build uses Kenny's supplied MP3 recordings for the live qualification flow. It does not synthesize or clone Kenny's voice.
+A browser-based Dubai real-estate qualification agent that plays Kenny's supplied original MP3 recordings, captures customer answers, analyzes the completed call with Gemini, stores the result in MongoDB, sends a Brevo email, and displays leads in a dashboard.
 
-## Flow
+## Current flow
 
-1. Visitor grants microphone permission.
+1. Visitor enables microphone access.
 2. Visitor submits name, phone, and optional email.
-3. The browser plays Kenny's original question clips.
-4. Chrome Speech Recognition captures each customer answer.
-5. If speech recognition is unavailable or unclear, a typed-answer fallback appears.
-6. The browser sends structured answers and the transcript to the Node.js backend.
-7. MongoDB stores the completed lead.
-8. Brevo sends the lead email to all addresses in `EMAIL_TO`.
-9. The dashboard displays the saved lead.
+3. Kenny's opening recording plays first.
+4. Affirmative responses such as yes, sure, or of course continue the flow.
+5. A negative opening response ends the call and saves a cold lead.
+6. The remaining original Kenny recordings ask qualification questions.
+7. The backend sends transcript + captured answers to Gemini.
+8. Gemini returns structured lead analysis.
+9. MongoDB stores the result and Brevo emails all configured recipients.
 
-## Audio sequence
+## Main stack
 
-- Buy or lease
-- Personal use or investment (buying flow only)
-- Preferred area
-- Budget
-- Timeline
-- Cash or finance (buying flow only)
-- Hot/warm/cold outcome
-- Callback confirmation
-- Goodbye
+- Plain HTML/CSS/JavaScript
+- Browser Web Speech API
+- Node.js + Express
+- Gemini API (`gemini-2.5-flash` by default)
+- MongoDB Atlas
+- Brevo Transactional Email API
+- Railway or Render
 
-Acknowledgement and clarification clips are inserted between questions. The supplied voicemail recording is also included in `public/audio/02-voicemail.mp3` for future telephone/voicemail use.
-
-## Browser support
-
-Google Chrome or Microsoft Edge is recommended because the build uses the browser Web Speech API for customer transcription. A typed fallback is built in.
-
-## Environment variables
-
-```env
-MONGO_URI=
-BREVO_API_KEY=
-EMAIL_FROM=
-EMAIL_FROM_NAME=Kenny Response Agent
-EMAIL_TO=first@example.com,second@example.com
-NODE_ENV=production
-```
-
-The old Vapi variables and webhook remain supported for the legacy Vapi flow, but they are not required for the original-recordings browser flow.
-
-## Run locally
+## Setup
 
 ```bash
+cp .env.example .env
 npm install
+npm run check
 npm start
 ```
 
-Open `http://localhost:3000`.
+See `GEMINI_SETUP.md` for API-key and deployment instructions.
+
+## Required environment variables
+
+```env
+MONGO_URI=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+BREVO_API_KEY=...
+EMAIL_FROM=...
+EMAIL_FROM_NAME=Kenny Voice Agent
+EMAIL_TO=email1@example.com,email2@example.com
+```
+
+`VAPI_PUBLIC_KEY` and `VAPI_ASSISTANT_ID` are optional legacy variables and are not required by the prerecorded browser flow.
+
+## Browser support
+
+Chrome and Edge are recommended because the project uses browser speech recognition. Typed-answer fallback appears when recognition fails or is unavailable.
+
+## Security
+
+Never commit `.env`, API keys, MongoDB passwords, or customer records to GitHub.
