@@ -11,9 +11,11 @@ const startCallButton = document.getElementById("startCallButton");
 const endCallButton = document.getElementById("endCallButton");
 const callState = document.getElementById("callState");
 const liveTranscript = document.getElementById("liveTranscript");
-const typedFallback = document.getElementById("typedFallback");
+const answerPanel = document.getElementById("answerPanel");
 const typedAnswer = document.getElementById("typedAnswer");
 const submitTypedAnswer = document.getElementById("submitTypedAnswer");
+const retryVoiceButton = document.getElementById("retryVoiceButton");
+const answerHint = document.getElementById("answerHint");
 
 let currentLeadId = "";
 let microphoneReady = false;
@@ -21,10 +23,14 @@ let recognition = null;
 let callRunning = false;
 let waitingForAnswer = false;
 let activeStepIndex = 0;
-let retryCount = 0;
 let transcriptLines = [];
 let answers = {};
 let finalizing = false;
+let manualEndRequested = false;
+let activeAudio = null;
+let activeAudioFinish = null;
+let pendingAnswer = null;
+let savePromise = null;
 
 const AUDIO = {
   opening: "/audio/01-opening.mp3",
@@ -145,14 +151,60 @@ function addTranscript(role, text) {
   liveTranscript.scrollTop = liveTranscript.scrollHeight;
 }
 
-function playAudio(src, label = "Kenny") {
+function stopActiveAudio() {
+  if (activeAudio) {
+    activeAudio.pause();
+    try { activeAudio.currentTime = 0; } catch {}
+    activeAudio.onended = null;
+    activeAudio.onerror = null;
+    activeAudio = null;
+  }
+
+  if (activeAudioFinish) {
+    const finish = activeAudioFinish;
+    activeAudioFinish = null;
+    finish(false);
+  }
+}
+
+function playAudio(src, label = "Kenny", { allowWhenStopped = false } = {}) {
+  if ((!callRunning && !allowWhenStopped) || manualEndRequested) {
+    return Promise.resolve(false);
+  }
+
+  stopActiveAudio();
+
   return new Promise((resolve, reject) => {
     const audio = new Audio(src);
+    let settled = false;
+
+    const finish = (completed) => {
+      if (settled) return;
+      settled = true;
+      if (activeAudio === audio) activeAudio = null;
+      if (activeAudioFinish === finish) activeAudioFinish = null;
+      resolve(completed);
+    };
+
+    activeAudio = audio;
+    activeAudioFinish = finish;
     audio.preload = "auto";
     setCallState(`${label} is speaking...`);
-    audio.onended = resolve;
-    audio.onerror = () => reject(new Error(`Could not play ${src}`));
-    audio.play().catch(reject);
+    audio.onended = () => finish(true);
+    audio.onerror = () => {
+      if (settled) return;
+      settled = true;
+      if (activeAudio === audio) activeAudio = null;
+      if (activeAudioFinish === finish) activeAudioFinish = null;
+      reject(new Error(`Could not play ${src}`));
+    };
+    audio.play().catch((error) => {
+      if (settled) return;
+      settled = true;
+      if (activeAudio === audio) activeAudio = null;
+      if (activeAudioFinish === finish) activeAudioFinish = null;
+      reject(error);
+    });
   });
 }
 
@@ -160,55 +212,155 @@ function speechRecognitionSupported() {
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
-function listenOnce() {
-  return new Promise((resolve, reject) => {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) {
-      reject(new Error("Speech recognition is not available in this browser."));
+function stopRecognition() {
+  if (!recognition) return;
+  const instance = recognition;
+  recognition = null;
+  try { instance.abort(); } catch {
+    try { instance.stop(); } catch {}
+  }
+}
+
+function showAnswerPanel(message) {
+  answerPanel.hidden = false;
+  typedAnswer.value = "";
+  answerHint.textContent = message || "Type your answer or speak. A submitted typed answer takes priority.";
+  typedAnswer.focus({ preventScroll: true });
+}
+
+function hideAnswerPanel() {
+  answerPanel.hidden = true;
+  submitTypedAnswer.onclick = null;
+  retryVoiceButton.onclick = null;
+}
+
+function cancelPendingAnswer() {
+  stopRecognition();
+  waitingForAnswer = false;
+
+  if (pendingAnswer && !pendingAnswer.settled) {
+    pendingAnswer.settled = true;
+    pendingAnswer.reject(new Error("CALL_ENDED"));
+  }
+  pendingAnswer = null;
+  hideAnswerPanel();
+}
+
+function startVoiceRecognition(controller) {
+  if (!speechRecognitionSupported() || controller.settled || manualEndRequested) {
+    retryVoiceButton.hidden = true;
+    answerHint.textContent = "Voice recognition is unavailable. Please type your answer.";
+    setCallState("Waiting for your typed answer...");
+    return;
+  }
+
+  stopRecognition();
+  retryVoiceButton.hidden = true;
+
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const instance = new Recognition();
+  recognition = instance;
+  instance.lang = "en-US";
+  instance.interimResults = true;
+  instance.continuous = false;
+  instance.maxAlternatives = 1;
+
+  let finalText = "";
+
+  instance.onstart = () => {
+    if (controller.settled) return;
+    waitingForAnswer = true;
+    setCallState("Listening... You can also type below. Typed submission has priority.");
+  };
+
+  instance.onresult = (event) => {
+    if (controller.settled) return;
+    let interim = "";
+
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const text = event.results[i][0].transcript.trim();
+      if (event.results[i].isFinal) finalText += `${text} `;
+      else interim += `${text} `;
+    }
+
+    if (interim.trim()) {
+      setCallState(`Listening: ${interim.trim()} — or submit a typed answer.`);
+    }
+  };
+
+  instance.onerror = (event) => {
+    if (controller.settled) return;
+    waitingForAnswer = false;
+    recognition = null;
+
+    if (event.error === "aborted") return;
+    retryVoiceButton.hidden = false;
+    answerHint.textContent = "No clear speech was detected. Type your answer, or select Listen again.";
+    setCallState("Waiting for a typed answer or another voice attempt...");
+  };
+
+  instance.onend = () => {
+    if (controller.settled) return;
+    waitingForAnswer = false;
+    recognition = null;
+    const spoken = finalText.trim();
+
+    if (spoken) {
+      controller.finish(spoken, "voice");
       return;
     }
 
-    recognition = new Recognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
+    retryVoiceButton.hidden = false;
+    answerHint.textContent = "No speech was detected. Type your answer, or select Listen again.";
+    setCallState("Waiting for a typed answer or another voice attempt...");
+  };
 
-    let finalText = "";
-    let settled = false;
+  try {
+    instance.start();
+  } catch (error) {
+    recognition = null;
+    retryVoiceButton.hidden = false;
+    answerHint.textContent = "Voice listening could not start. Type your answer, or select Listen again.";
+    setCallState("Waiting for your answer...");
+    console.warn("Speech recognition start error:", error.message);
+  }
+}
 
-    recognition.onstart = () => {
-      waitingForAnswer = true;
-      setCallState("Listening... Speak now.");
-    };
+function captureAnswer() {
+  cancelPendingAnswer();
 
-    recognition.onresult = (event) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const text = event.results[i][0].transcript.trim();
-        if (event.results[i].isFinal) finalText += `${text} `;
-        else interim += `${text} `;
+  return new Promise((resolve, reject) => {
+    const controller = {
+      settled: false,
+      resolve,
+      reject,
+      finish(value, source) {
+        if (controller.settled || manualEndRequested) return;
+        const answer = String(value || "").trim();
+        if (!answer) return;
+
+        controller.settled = true;
+        stopRecognition();
+        waitingForAnswer = false;
+        pendingAnswer = null;
+        hideAnswerPanel();
+        setCallState(source === "typed" ? "Typed answer received." : "Voice answer received.");
+        resolve(answer);
       }
-      if (interim.trim()) setCallState(`Listening: ${interim.trim()}`);
     };
 
-    recognition.onerror = (event) => {
-      if (settled) return;
-      settled = true;
-      waitingForAnswer = false;
-      reject(new Error(event.error || "Speech recognition failed."));
+    pendingAnswer = controller;
+    showAnswerPanel("Type your answer or speak. A submitted typed answer takes priority.");
+
+    submitTypedAnswer.onclick = () => {
+      controller.finish(typedAnswer.value, "typed");
     };
 
-    recognition.onend = () => {
-      if (settled) return;
-      settled = true;
-      waitingForAnswer = false;
-      const answer = finalText.trim();
-      if (answer) resolve(answer);
-      else reject(new Error("No speech was detected."));
+    retryVoiceButton.onclick = () => {
+      if (!controller.settled) startVoiceRecognition(controller);
     };
 
-    recognition.start();
+    startVoiceRecognition(controller);
   });
 }
 
@@ -275,78 +427,45 @@ function calculateLeadQuality() {
   return "cold";
 }
 
-function showTypedFallback(message) {
-  typedFallback.hidden = false;
-  typedAnswer.value = "";
-  typedAnswer.focus();
-  setCallState(message || "Type your answer below.");
-}
-
-function hideTypedFallback() {
-  typedFallback.hidden = true;
-}
-
-async function captureAnswer(step) {
-  hideTypedFallback();
-
-  try {
-    const spoken = await listenOnce();
-    return spoken;
-  } catch (error) {
-    console.warn("Speech capture error:", error.message);
-    if (!callRunning) throw error;
-
-    if (retryCount < 1 && speechRecognitionSupported()) {
-      retryCount += 1;
-      await playAudio(AUDIO.sorryClarifier);
-      return listenOnce();
-    }
-
-    return new Promise((resolve) => {
-      showTypedFallback("I could not hear that clearly. Type your answer and continue.");
-      submitTypedAnswer.onclick = () => {
-        const value = typedAnswer.value.trim();
-        if (!value) return;
-        hideTypedFallback();
-        resolve(value);
-      };
-    });
+function saveRecordedLead(payload) {
+  if (!savePromise) {
+    savePromise = postJson(`/api/leads/${currentLeadId}/recorded-complete`, payload);
   }
+  return savePromise;
 }
 
 async function runConversation() {
-  if (callRunning) return;
+  if (callRunning || finalizing) return;
+
   callRunning = true;
   finalizing = false;
+  manualEndRequested = false;
+  savePromise = null;
   answers = {};
   transcriptLines = [];
   liveTranscript.textContent = "";
   activeStepIndex = 0;
-  retryCount = 0;
 
   startCallButton.disabled = true;
   endCallButton.disabled = false;
-  setStatus("Original Kenny recordings are being used. Please answer after each question.");
+  setStatus("Original Kenny recordings are being used. Answer by typing or speaking after each question.");
 
   try {
     await postJson(`/api/leads/${currentLeadId}/call-start`, { callId: `recorded-${Date.now()}` }, "PATCH");
 
-    // The supplied opening recording always plays first. The qualification
-    // continues only after an affirmative response.
     addTranscript("Kenny", "Opening and permission to continue");
     await playAudio(AUDIO.opening);
     if (!callRunning) return;
 
     const consentStep = { key: "consent", label: "Permission to continue" };
-    retryCount = 0;
-    let consentRaw = await captureAnswer(consentStep);
+    let consentRaw = await captureAnswer();
     addTranscript("Customer", consentRaw);
     let consent = normalizeConsent(consentRaw);
 
-    if (consent === "unknown") {
+    if (consent === "unknown" && callRunning) {
       await playAudio(AUDIO.clarifier);
-      retryCount = 0;
-      consentRaw = await captureAnswer(consentStep);
+      if (!callRunning) return;
+      consentRaw = await captureAnswer();
       addTranscript("Customer", consentRaw);
       consent = normalizeConsent(consentRaw);
     }
@@ -365,18 +484,19 @@ async function runConversation() {
       const step = steps[activeStepIndex];
       addTranscript("Kenny", step.label);
       await playAudio(step.audio);
-      if (!callRunning) break;
+      if (!callRunning) return;
 
-      retryCount = 0;
-      const rawAnswer = await captureAnswer(step);
-      if (!callRunning) break;
+      const rawAnswer = await captureAnswer();
+      if (!callRunning) return;
 
       addTranscript("Customer", rawAnswer);
       const parsed = parseAnswer(step, rawAnswer);
 
       if (!isValidAnswer(step, parsed)) {
         await playAudio(AUDIO.clarifier);
-        const secondAnswer = await captureAnswer(step);
+        if (!callRunning) return;
+        const secondAnswer = await captureAnswer();
+        if (!callRunning) return;
         addTranscript("Customer", secondAnswer);
         const secondParsed = parseAnswer(step, secondAnswer);
         answers[step.key] = isValidAnswer(step, secondParsed) ? secondParsed : "unknown";
@@ -385,37 +505,37 @@ async function runConversation() {
       }
 
       await playAudio(acknowledgementFor(activeStepIndex), "Kenny");
+      if (!callRunning) return;
       activeStepIndex += 1;
     }
 
     if (callRunning) await finishRecordedCall();
   } catch (error) {
+    if (error.message === "CALL_ENDED" || manualEndRequested) return;
     console.error(error);
     setStatus(`Call flow error: ${error.message}`, true);
     await finishRecordedCall(true);
   }
 }
 
-
 async function finishDeclinedCall(reason) {
   if (finalizing) return;
   finalizing = true;
   callRunning = false;
-  waitingForAnswer = false;
-  try { recognition?.stop?.(); } catch {}
-
+  cancelPendingAnswer();
   addTranscript("System", reason);
 
   try {
-    await playAudio(AUDIO.goodbye);
+    await playAudio(AUDIO.goodbye, "Kenny", { allowWhenStopped: true });
   } catch (error) {
     console.warn("Goodbye audio error:", error.message);
   }
 
+  if (manualEndRequested) return;
   setCallState("Call ended. Saving the response...");
 
   try {
-    const result = await postJson(`/api/leads/${currentLeadId}/recorded-complete`, {
+    const result = await saveRecordedLead({
       transcript: transcriptLines.join("\n"),
       answers,
       leadQuality: "cold",
@@ -431,6 +551,7 @@ async function finishDeclinedCall(reason) {
   } finally {
     endCallButton.disabled = true;
     startCallButton.disabled = false;
+    finalizing = false;
   }
 }
 
@@ -438,27 +559,26 @@ async function finishRecordedCall(offScript = false) {
   if (finalizing) return;
   finalizing = true;
   callRunning = false;
-  waitingForAnswer = false;
-  try { recognition?.stop?.(); } catch {}
-
+  cancelPendingAnswer();
   const leadQuality = calculateLeadQuality();
 
   try {
     if (offScript) {
-      await playAudio(AUDIO.offScript);
+      await playAudio(AUDIO.offScript, "Kenny", { allowWhenStopped: true });
     } else {
-      await playAudio(AUDIO[leadQuality]);
-      await playAudio(AUDIO.callback);
+      await playAudio(AUDIO[leadQuality], "Kenny", { allowWhenStopped: true });
+      if (!manualEndRequested) await playAudio(AUDIO.callback, "Kenny", { allowWhenStopped: true });
     }
-    await playAudio(AUDIO.goodbye);
+    if (!manualEndRequested) await playAudio(AUDIO.goodbye, "Kenny", { allowWhenStopped: true });
   } catch (error) {
     console.warn("Closing audio error:", error.message);
   }
 
+  if (manualEndRequested) return;
   setCallState("Call complete. Saving the lead...");
 
   try {
-    const result = await postJson(`/api/leads/${currentLeadId}/recorded-complete`, {
+    const result = await saveRecordedLead({
       transcript: transcriptLines.join("\n"),
       answers,
       leadQuality,
@@ -473,14 +593,46 @@ async function finishRecordedCall(offScript = false) {
   } finally {
     endCallButton.disabled = true;
     startCallButton.disabled = false;
+    finalizing = false;
+  }
+}
+
+async function endCallImmediately() {
+  if ((!callRunning && !finalizing) || manualEndRequested) return;
+
+  manualEndRequested = true;
+  callRunning = false;
+  finalizing = true;
+  stopActiveAudio();
+  cancelPendingAnswer();
+  addTranscript("System", "Customer ended the call manually.");
+  setCallState("Call ended. Saving available answers...");
+  setStatus("The call was stopped immediately. Kenny will not continue speaking.");
+  endCallButton.disabled = true;
+
+  try {
+    const result = await saveRecordedLead({
+      transcript: transcriptLines.join("\n"),
+      answers,
+      leadQuality: calculateLeadQuality(),
+      callerSentiment: "neutral",
+      manuallyEnded: true
+    });
+    setStatus(result.message || "Call ended and available answers were saved.");
+    setCallState("Ended");
+  } catch (error) {
+    setStatus(`Call stopped, but saving failed: ${error.message}`, true);
+    setCallState("Save failed");
+  } finally {
+    startCallButton.disabled = false;
+    finalizing = false;
   }
 }
 
 micPermissionButton.addEventListener("click", requestMicrophonePermission);
 document.addEventListener("DOMContentLoaded", initializeMicrophoneGate);
-
 startCallButton.addEventListener("click", runConversation);
-endCallButton.addEventListener("click", () => finishRecordedCall(true));
+endCallButton.addEventListener("click", endCallImmediately);
 
 typedAnswer.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -516,7 +668,7 @@ form.addEventListener("submit", async (event) => {
     callArea.scrollIntoView({ behavior: "smooth", block: "center" });
 
     if (!speechRecognitionSupported()) {
-      setStatus("Voice recognition is unavailable in this browser. Chrome is recommended; typed fallback will be used.", true);
+      setStatus("Voice recognition is unavailable in this browser. You can answer every question by typing.", true);
     }
   } catch (error) {
     setStatus(error.message, true);

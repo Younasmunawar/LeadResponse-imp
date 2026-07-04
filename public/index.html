@@ -53,7 +53,7 @@
         <div class="call-copy">
           <p class="eyebrow">Step 2 of 2 · Original Kenny audio</p>
           <h2>You are ready to talk to Kenny</h2>
-          <p>Press <strong>Start call</strong>, then answer after each recorded question. Please wait until Kenny finishes speaking before you reply.</p>
+          <p>Press <strong>Start call</strong>, then answer each question by <strong>typing or speaking</strong>. Typed answers are given priority when submitted.</p>
         </div>
 
         <div class="recorded-call-controls">
@@ -63,12 +63,19 @@
 
         <div id="callState" class="call-state">Ready</div>
 
-        <div id="typedFallback" class="typed-fallback" hidden>
-          <label for="typedAnswer">Type your answer</label>
-          <div class="typed-row">
-            <input id="typedAnswer" type="text" autocomplete="off" />
-            <button id="submitTypedAnswer" class="secondary-button" type="button">Continue</button>
+        <div id="answerPanel" class="typed-fallback answer-panel" hidden>
+          <div class="answer-heading-row">
+            <div>
+              <label for="typedAnswer">Your answer</label>
+              <p id="answerHint" class="answer-hint">Type your answer or speak. A submitted typed answer takes priority.</p>
+            </div>
+            <span class="answer-mode-badge">Type + Voice</span>
           </div>
+          <div class="typed-row">
+            <input id="typedAnswer" type="text" autocomplete="off" placeholder="Type your answer here..." />
+            <button id="submitTypedAnswer" class="primary-button answer-submit" type="button">Submit answer</button>
+          </div>
+          <button id="retryVoiceButton" class="voice-retry-button" type="button" hidden>🎙 Listen again</button>
         </div>
 
         <div class="transcript-card">

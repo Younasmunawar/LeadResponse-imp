@@ -56,4 +56,10 @@ Chrome and Edge are recommended because the project uses browser speech recognit
 ## Security
 
 Never commit `.env`, API keys, MongoDB passwords, or customer records to GitHub.
-# LeadResponse-imp
+
+## v8 interaction improvements
+
+- The End call button now stops the active Kenny audio immediately, aborts speech recognition, and saves answers collected so far.
+- Every question supports typing and speaking at the same time.
+- A submitted typed answer has priority and immediately stops the active speech-recognition attempt.
+- If no speech is detected, the user can keep typing or press Listen again.
