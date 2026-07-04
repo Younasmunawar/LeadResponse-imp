@@ -1,1 +1,34 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kenny Lead Dashboard</title><link rel="stylesheet" href="/style.css"></head><body><header class="site-header"><a class="brand" href="/">Falcon Heights</a><a class="nav-link" href="/">New browser call</a></header><main class="dashboard-shell"><div class="dashboard-header"><div><p class="eyebrow">Voice agent results</p><h1>Kenny lead dashboard</h1></div><button id="refreshButton" class="refresh-button">Refresh</button></div><section id="summaryGrid" class="summary-grid"></section><section id="leadList" class="lead-list"></section></main><script src="/dashboard.js" defer></script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kenny Lead Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">Falcon Heights</a>
+    <a class="nav-link" href="/">New browser call</a>
+  </header>
+
+  <main class="dashboard-shell">
+    <div class="dashboard-header">
+      <div>
+        <p class="eyebrow">Voice agent results</p>
+        <h1>Kenny lead dashboard</h1>
+        <p class="dashboard-note">Lead quality is based only on completed qualification answers: 5+ hot, 4 warm, fewer than 4 cold. Property type and follow-up time are excluded.</p>
+      </div>
+      <div class="dashboard-actions">
+        <button id="exportButton" class="refresh-button export-button" type="button">Export CSV</button>
+        <button id="refreshButton" class="refresh-button" type="button">Refresh</button>
+      </div>
+    </div>
+
+    <section id="summaryGrid" class="summary-grid"></section>
+    <section id="leadList" class="lead-list"></section>
+  </main>
+
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

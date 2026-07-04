@@ -63,3 +63,13 @@ Never commit `.env`, API keys, MongoDB passwords, or customer records to GitHub.
 - Every question supports typing and speaking at the same time.
 - A submitted typed answer has priority and immediately stops the active speech-recognition attempt.
 - If no speech is detected, the user can keep typing or press Listen again.
+
+## v9 deterministic scoring and dashboard controls
+
+Lead quality is now calculated by completed qualification answers, not by Gemini judgment:
+
+- 5 or more positive/usable answers: **hot**
+- 4 positive/usable answers: **warm**
+- fewer than 4: **cold**
+
+Property type and follow-up time are excluded from scoring. The dashboard automatically recalculates older Gemini records when opened. It also includes per-lead delete controls and CSV export.

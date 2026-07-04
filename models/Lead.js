@@ -38,6 +38,9 @@ const leadSchema = new mongoose.Schema(
       enum: ["hot", "warm", "cold", "unknown"],
       default: "unknown"
     },
+    answeredQuestionCount: { type: Number, default: 0 },
+    possibleQuestionCount: { type: Number, default: 0 },
+    positiveMetrics: { type: [String], default: [] },
     callerSentiment: {
       type: String,
       enum: ["positive", "neutral", "negative", "busy", "unknown"],

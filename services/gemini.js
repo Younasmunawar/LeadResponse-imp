@@ -102,10 +102,7 @@ RULES
 5. For lease leads, payment_method must be not_applicable.
 6. If WhatsApp consent is yes, whatsapp_number should use the form phone number. If consent is no, use "not confirmed". Otherwise use "unknown".
 7. If the customer declined at the opening, classify the lead as cold and caller_sentiment as negative or busy based only on the wording.
-8. Lead-quality guidance:
-   - hot: clear actionable intent, useful budget, and near-term timeline.
-   - warm: interested but later timeline or one important detail is missing.
-   - cold: declined, not interested, unclear intent, or insufficient actionable information.
+8. The server calculates final lead quality by counting completed qualification answers. Property type and follow-up time must not affect lead quality. Your lead_quality value is advisory only.
 9. summary must be concise, factual, and suitable for a sales dashboard.
 10. next_step must be a practical instruction for a human property agent.
 11. best_follow_up_time must be exact only if stated; otherwise use "unknown".

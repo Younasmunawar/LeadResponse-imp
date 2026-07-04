@@ -29,6 +29,8 @@ let finalizing = false;
 let manualEndRequested = false;
 let activeAudio = null;
 let activeAudioFinish = null;
+let audioGeneration = 0;
+const liveAudioObjects = new Set();
 let pendingAnswer = null;
 let savePromise = null;
 
@@ -151,14 +153,35 @@ function addTranscript(role, text) {
   liveTranscript.scrollTop = liveTranscript.scrollHeight;
 }
 
+function hardStopAudioObject(audio) {
+  if (!audio) return;
+  try { audio.muted = true; } catch {}
+  try { audio.volume = 0; } catch {}
+  try { audio.pause(); } catch {}
+  try { audio.currentTime = 0; } catch {}
+  audio.onended = null;
+  audio.onerror = null;
+  audio.onpause = null;
+  try {
+    audio.removeAttribute("src");
+    audio.src = "";
+    audio.load();
+  } catch {}
+  liveAudioObjects.delete(audio);
+}
+
 function stopActiveAudio() {
-  if (activeAudio) {
-    activeAudio.pause();
-    try { activeAudio.currentTime = 0; } catch {}
-    activeAudio.onended = null;
-    activeAudio.onerror = null;
-    activeAudio = null;
+  audioGeneration += 1;
+
+  for (const audio of [...liveAudioObjects]) {
+    hardStopAudioObject(audio);
   }
+
+  document.querySelectorAll("audio").forEach((audio) => {
+    hardStopAudioObject(audio);
+  });
+
+  activeAudio = null;
 
   if (activeAudioFinish) {
     const finish = activeAudioFinish;
@@ -173,6 +196,7 @@ function playAudio(src, label = "Kenny", { allowWhenStopped = false } = {}) {
   }
 
   stopActiveAudio();
+  const myGeneration = audioGeneration;
 
   return new Promise((resolve, reject) => {
     const audio = new Audio(src);
@@ -181,6 +205,7 @@ function playAudio(src, label = "Kenny", { allowWhenStopped = false } = {}) {
     const finish = (completed) => {
       if (settled) return;
       settled = true;
+      liveAudioObjects.delete(audio);
       if (activeAudio === audio) activeAudio = null;
       if (activeAudioFinish === finish) activeAudioFinish = null;
       resolve(completed);
@@ -188,19 +213,39 @@ function playAudio(src, label = "Kenny", { allowWhenStopped = false } = {}) {
 
     activeAudio = audio;
     activeAudioFinish = finish;
+    liveAudioObjects.add(audio);
     audio.preload = "auto";
     setCallState(`${label} is speaking...`);
-    audio.onended = () => finish(true);
+
+    audio.onended = () => {
+      if (manualEndRequested || myGeneration !== audioGeneration) {
+        finish(false);
+        return;
+      }
+      finish(true);
+    };
+
     audio.onerror = () => {
+      if (manualEndRequested || myGeneration !== audioGeneration) {
+        finish(false);
+        return;
+      }
       if (settled) return;
       settled = true;
+      liveAudioObjects.delete(audio);
       if (activeAudio === audio) activeAudio = null;
       if (activeAudioFinish === finish) activeAudioFinish = null;
       reject(new Error(`Could not play ${src}`));
     };
+
     audio.play().catch((error) => {
+      if (manualEndRequested || myGeneration !== audioGeneration) {
+        finish(false);
+        return;
+      }
       if (settled) return;
       settled = true;
+      liveAudioObjects.delete(audio);
       if (activeAudio === audio) activeAudio = null;
       if (activeAudioFinish === finish) activeAudioFinish = null;
       reject(error);
@@ -416,15 +461,44 @@ function acknowledgementFor(index) {
   return [AUDIO.ackPerfect, AUDIO.ackHelpful, AUDIO.ackThanks, AUDIO.ackUnderstood, AUDIO.wonderful][index % 5];
 }
 
-function calculateLeadQuality() {
-  const timeline = String(answers.timeline || "").toLowerCase();
-  const budgetKnown = answers.budget && answers.budget !== "unknown";
-  const urgent = /immediate|as soon|asap|now|this month|1 month|one month|2 month|two month|3 month|three month|30 day|60 day|90 day/.test(timeline);
-  const medium = /3|4|5|6|few month|quarter/.test(timeline);
+function isMeaningfulAnswer(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return Boolean(normalized) && ![
+    "unknown",
+    "unclear",
+    "not provided",
+    "no response",
+    "n/a",
+    "na",
+    "skip",
+    "skipped"
+  ].includes(normalized);
+}
 
-  if (answers.intent === "buy" && budgetKnown && urgent) return "hot";
-  if (budgetKnown && (urgent || medium || answers.timeline !== "unknown")) return "warm";
-  return "cold";
+function calculateLeadScore() {
+  // Property type and follow-up time are deliberately excluded.
+  const checks = [
+    ["intent", ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
+    ["purpose", isMeaningfulAnswer(answers.purpose)],
+    ["preferredArea", isMeaningfulAnswer(answers.preferredArea)],
+    ["budget", isMeaningfulAnswer(answers.budget)],
+    ["timeline", isMeaningfulAnswer(answers.timeline)],
+    ["paymentMethod", ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
+    ["whatsappConsent", String(answers.whatsappConsent || "").toLowerCase() === "yes"]
+  ];
+
+  const applicable = checks.filter(([key]) => !(key === "paymentMethod" && answers.intent === "lease"));
+  const answeredCount = applicable.filter(([, passed]) => passed).length;
+
+  return {
+    answeredCount,
+    possibleCount: applicable.length,
+    leadQuality: answeredCount >= 5 ? "hot" : answeredCount >= 4 ? "warm" : "cold"
+  };
+}
+
+function calculateLeadQuality() {
+  return calculateLeadScore().leadQuality;
 }
 
 function saveRecordedLead(payload) {
@@ -597,13 +671,21 @@ async function finishRecordedCall(offScript = false) {
   }
 }
 
-async function endCallImmediately() {
+async function endCallImmediately(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
   if ((!callRunning && !finalizing) || manualEndRequested) return;
 
   manualEndRequested = true;
   callRunning = false;
   finalizing = true;
+  endCallButton.disabled = true;
+
+  // Stop sound before doing any async work. This also invalidates every older audio promise.
   stopActiveAudio();
+  stopRecognition();
   cancelPendingAnswer();
   addTranscript("System", "Customer ended the call manually.");
   setCallState("Call ended. Saving available answers...");
@@ -632,7 +714,8 @@ async function endCallImmediately() {
 micPermissionButton.addEventListener("click", requestMicrophonePermission);
 document.addEventListener("DOMContentLoaded", initializeMicrophoneGate);
 startCallButton.addEventListener("click", runConversation);
-endCallButton.addEventListener("click", endCallImmediately);
+endCallButton.addEventListener("pointerdown", endCallImmediately, { capture: true });
+endCallButton.addEventListener("click", endCallImmediately, { capture: true });
 
 typedAnswer.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {

@@ -27,6 +27,57 @@ function normalizeEnum(value, allowed, fallback = "unknown") {
   return allowed.includes(normalized) ? normalized : fallback;
 }
 
+function isMeaningfulAnswer(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+  return Boolean(normalized) && ![
+    "unknown",
+    "unclear",
+    "not provided",
+    "no response",
+    "n/a",
+    "na",
+    "skip",
+    "skipped"
+  ].includes(normalized);
+}
+
+function calculateQualificationScore(answers = {}, declinedAtOpening = false) {
+  if (declinedAtOpening) {
+    return {
+      answeredCount: 0,
+      possibleCount: 0,
+      leadQuality: "cold",
+      positiveMetrics: []
+    };
+  }
+
+  // Property type and follow-up time are intentionally excluded.
+  const checks = [
+    ["intent", ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
+    ["purpose", isMeaningfulAnswer(answers.purpose)],
+    ["preferredArea", isMeaningfulAnswer(answers.preferredArea)],
+    ["budget", isMeaningfulAnswer(answers.budget)],
+    ["timeline", isMeaningfulAnswer(answers.timeline)],
+    ["paymentMethod", ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
+    ["whatsappConsent", String(answers.whatsappConsent || "").toLowerCase() === "yes"]
+  ];
+
+  // Payment is not asked for lease leads, so it is not part of the possible count.
+  const applicableChecks = checks.filter(([key]) => !(key === "paymentMethod" && answers.intent === "lease"));
+  const positiveMetrics = applicableChecks.filter(([, passed]) => passed).map(([key]) => key);
+  const answeredCount = positiveMetrics.length;
+
+  return {
+    answeredCount,
+    possibleCount: applicableChecks.length,
+    leadQuality: answeredCount >= 5 ? "hot" : answeredCount >= 4 ? "warm" : "cold",
+    positiveMetrics
+  };
+}
+
 function transcriptFromPayload(payload = {}) {
   const message = payload.message || {};
   const candidates = [
@@ -306,6 +357,7 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
     const answers = req.body?.answers || {};
     const transcript = String(req.body?.transcript || "").trim();
     const declinedAtOpening = req.body?.declinedAtOpening === true;
+    const qualification = calculateQualificationScore(answers, declinedAtOpening);
 
     lead.callEndedAt = new Date();
     lead.transcript = transcript;
@@ -345,11 +397,12 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
         "unknown"
       ]);
       lead.whatsappNumber = String(data.whatsapp_number || "unknown").trim();
-      lead.leadQuality = normalizeEnum(
-        data.lead_quality,
-        ["hot", "warm", "cold"],
-        "warm"
-      );
+      // Lead quality is deterministic and does not depend on Gemini's opinion.
+      // 5+ positive answers = hot, 4 = warm, fewer than 4 = cold.
+      lead.leadQuality = qualification.leadQuality;
+      lead.answeredQuestionCount = qualification.answeredCount;
+      lead.possibleQuestionCount = qualification.possibleCount;
+      lead.positiveMetrics = qualification.positiveMetrics;
       lead.callerSentiment = normalizeEnum(
         data.caller_sentiment,
         ["positive", "neutral", "negative", "busy", "unknown"],
@@ -366,6 +419,7 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
         finishReason: geminiResult.finishReason,
         usageMetadata: geminiResult.usageMetadata,
         answers,
+        qualification,
         analysis: data
       };
     } catch (geminiError) {
@@ -395,11 +449,10 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
           : answers.whatsappConsent === "no"
             ? "not confirmed"
             : "unknown";
-      lead.leadQuality = normalizeEnum(
-        req.body?.leadQuality,
-        ["hot", "warm", "cold"],
-        declinedAtOpening ? "cold" : "warm"
-      );
+      lead.leadQuality = qualification.leadQuality;
+      lead.answeredQuestionCount = qualification.answeredCount;
+      lead.possibleQuestionCount = qualification.possibleCount;
+      lead.positiveMetrics = qualification.positiveMetrics;
       lead.callerSentiment = normalizeEnum(
         req.body?.callerSentiment,
         ["positive", "neutral", "negative", "busy", "unknown"],
@@ -415,6 +468,7 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
       lead.rawStructuredOutput = {
         source: "local-fallback",
         answers,
+        qualification,
         geminiError: geminiError.message
       };
     }
@@ -494,6 +548,44 @@ app.post("/vapi/webhook", async (req, res) => {
   }
 });
 
+app.post("/api/leads/recalculate-scores", async (_req, res) => {
+  try {
+    const leads = await Lead.find({
+      "rawStructuredOutput.answers": { $exists: true }
+    });
+
+    let updated = 0;
+
+    for (const lead of leads) {
+      const answers = lead.rawStructuredOutput?.answers || {};
+      const declinedAtOpening = answers.consent && answers.consent !== "yes";
+      const qualification = calculateQualificationScore(answers, declinedAtOpening);
+
+      if (
+        lead.leadQuality !== qualification.leadQuality ||
+        lead.answeredQuestionCount !== qualification.answeredCount ||
+        lead.possibleQuestionCount !== qualification.possibleCount
+      ) {
+        lead.leadQuality = qualification.leadQuality;
+        lead.answeredQuestionCount = qualification.answeredCount;
+        lead.possibleQuestionCount = qualification.possibleCount;
+        lead.positiveMetrics = qualification.positiveMetrics;
+        lead.rawStructuredOutput = {
+          ...lead.rawStructuredOutput,
+          qualification
+        };
+        await lead.save();
+        updated += 1;
+      }
+    }
+
+    res.json({ success: true, updated });
+  } catch (error) {
+    console.error("Recalculate scores error:", error.message);
+    res.status(500).json({ success: false, message: "Unable to recalculate lead scores." });
+  }
+});
+
 app.get("/api/leads", async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 100), 500);
@@ -501,6 +593,55 @@ app.get("/api/leads", async (req, res) => {
     res.json({ success: true, leads });
   } catch {
     res.status(500).json({ success: false, message: "Unable to load leads." });
+  }
+});
+
+app.get("/api/leads/export.csv", async (_req, res) => {
+  try {
+    const leads = await Lead.find().sort({ createdAt: -1 }).lean();
+    const headers = [
+      "Created At", "Name", "Phone", "Email", "Quality", "Answered Count",
+      "Possible Count", "Intent", "Purpose", "Area", "Budget", "Timeline",
+      "Payment", "WhatsApp", "Sentiment", "Status", "Analysis", "Summary",
+      "Next Step", "Transcript"
+    ];
+
+    const csvCell = (value) => {
+      const text = String(value ?? "").replace(/\r?\n/g, " ");
+      return `"${text.replaceAll('"', '""')}"`;
+    };
+
+    const rows = leads.map((lead) => [
+      lead.createdAt ? new Date(lead.createdAt).toISOString() : "",
+      lead.name, lead.phone, lead.email, lead.leadQuality,
+      lead.answeredQuestionCount, lead.possibleQuestionCount, lead.intent,
+      lead.purpose, lead.preferredArea, lead.budget, lead.timeline,
+      lead.paymentMethod, lead.whatsappNumber, lead.callerSentiment, lead.status,
+      lead.rawStructuredOutput?.source || "unknown", lead.summary, lead.nextStep,
+      lead.transcript
+    ].map(csvCell).join(","));
+
+    const csv = [headers.map(csvCell).join(","), ...rows].join("\n");
+    const filename = `kenny-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    console.error("Export leads error:", error.message);
+    res.status(500).json({ success: false, message: "Unable to export leads." });
+  }
+});
+
+app.delete("/api/leads/:id", async (req, res) => {
+  try {
+    const deleted = await Lead.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Lead not found." });
+    }
+    res.json({ success: true, message: "Lead deleted successfully." });
+  } catch {
+    res.status(400).json({ success: false, message: "Invalid lead ID." });
   }
 });
 
