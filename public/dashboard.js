@@ -62,7 +62,6 @@ function leadCard(lead) {
 
       <p><strong>Summary:</strong> ${esc(lead.summary || "Analysis pending.")}</p>
       <p><strong>Next step:</strong> ${esc(lead.nextStep || "Not available.")}</p>
-      ${lead.processingError ? `<p class="status error">${esc(lead.processingError)}</p>` : ""}
       <details>
         <summary>Transcript</summary>
         <pre>${esc(lead.transcript || "No transcript captured yet.")}</pre>

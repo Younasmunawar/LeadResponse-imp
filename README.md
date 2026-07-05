@@ -39,7 +39,8 @@ See `GEMINI_SETUP.md` for API-key and deployment instructions.
 
 ```env
 MONGO_URI=...
-GEMINI_API_KEY=...
+GEMINI_API_KEY_PRIMARY=...
+GEMINI_API_KEY_SECONDARY=...
 GEMINI_MODEL=gemini-2.5-flash
 BREVO_API_KEY=...
 EMAIL_FROM=...
@@ -85,3 +86,18 @@ Every opening/qualification answer is validated by Gemini before the flow advanc
 - After a clarification clip, the system listens immediately instead of replaying the question.
 - The original question is replayed only when the customer explicitly asks for it to be repeated.
 - `10-glue-wonderful.mp3` is no longer used anywhere in the conversation flow.
+
+## Gemini dual-key failover
+
+Set `GEMINI_API_KEY_PRIMARY` and `GEMINI_API_KEY_SECONDARY`. The server alternates the starting key and automatically fails over to the other key on quota, network, or temporary server errors. The legacy `GEMINI_API_KEY` variable is still accepted for a single-key deployment.
+
+## Gemini retry and private error handling
+
+If both Gemini keys are temporarily rate-limited or return a retryable server/network error, the backend waits and retries automatically. The default is three rounds. Provider errors and quota details are written only to deployment logs; they are not shown on the call page or dashboard.
+
+Optional environment variables:
+
+```env
+GEMINI_RETRY_ROUNDS=3
+GEMINI_RETRY_DELAY_MS=5000
+```

@@ -1,9 +1,197 @@
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-function requiredEnv(name) {
-  const value = String(process.env[name] || "").trim();
-  if (!value) throw new Error(`${name} is missing.`);
-  return value;
+const keyCooldowns = new Map();
+let nextKeyIndex = 0;
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function getGeminiKeys() {
+  const commaSeparated = String(process.env.GEMINI_API_KEYS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return unique([
+    String(process.env.GEMINI_API_KEY_PRIMARY || "").trim(),
+    String(process.env.GEMINI_API_KEY_SECONDARY || "").trim(),
+    ...commaSeparated,
+    // Backward compatibility with the old single-key variable.
+    String(process.env.GEMINI_API_KEY || "").trim()
+  ]);
+}
+
+export function getGeminiKeyCount() {
+  return getGeminiKeys().length;
+}
+
+function requireGeminiKeys() {
+  const keys = getGeminiKeys();
+  if (!keys.length) {
+    throw new Error(
+      "Gemini API key is missing. Set GEMINI_API_KEY_PRIMARY and optionally GEMINI_API_KEY_SECONDARY."
+    );
+  }
+  return keys;
+}
+
+function parseRetryDelayMs(message = "") {
+  const text = String(message);
+  const match = text.match(/retry(?:\s+after|\s+in)?[:\s]+([0-9.]+)\s*s/i);
+  if (!match) return 60_000;
+  return Math.max(1_000, Math.ceil(Number(match[1]) * 1_000));
+}
+
+function isQuotaError(status, message = "") {
+  return Number(status) === 429 || /quota|resource_exhausted|rate limit/i.test(String(message));
+}
+
+function shouldTryAnotherKey(status, error) {
+  if (error?.name === "AbortError") return true;
+  if (!status) return true;
+  return status === 429 || status >= 500;
+}
+
+async function requestGemini({ requestBody, model, timeoutMs, operation }) {
+  const keys = requireGeminiKeys();
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+  const maxRounds = Math.max(1, Number(process.env.GEMINI_RETRY_ROUNDS || 3));
+  const baseRetryDelayMs = Math.max(
+    1_000,
+    Number(process.env.GEMINI_RETRY_DELAY_MS || 5_000)
+  );
+
+  let lastError = null;
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const startIndex = nextKeyIndex % keys.length;
+    nextKeyIndex = (nextKeyIndex + 1) % keys.length;
+    let attemptedThisRound = 0;
+    let sawRetryableFailure = false;
+
+    console.log(`Gemini ${operation}: attempt round ${round}/${maxRounds}.`);
+
+    for (let offset = 0; offset < keys.length; offset += 1) {
+      const index = (startIndex + offset) % keys.length;
+      const apiKey = keys[index];
+      const keyLabel = `key-${index + 1}`;
+      const cooldownUntil = keyCooldowns.get(apiKey) || 0;
+
+      if (cooldownUntil > Date.now()) {
+        console.warn(
+          `Gemini ${keyLabel} is cooling down for ${Math.max(
+            1,
+            Math.ceil((cooldownUntil - Date.now()) / 1000)
+          )} more seconds.`
+        );
+        continue;
+      }
+
+      attemptedThisRound += 1;
+      const timeout = createTimeoutController(timeoutMs);
+      let status = 0;
+
+      try {
+        console.log(`Gemini ${operation} using ${keyLabel} and ${model}.`);
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey
+          },
+          body: JSON.stringify(requestBody),
+          signal: timeout.controller.signal
+        });
+
+        status = response.status;
+        const rawBody = await response.text();
+        let payload = {};
+
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+          payload = { rawBody };
+        }
+
+        if (!response.ok) {
+          const message =
+            payload?.error?.message ||
+            payload?.message ||
+            `Gemini returned HTTP ${response.status}`;
+          const apiError = new Error(message);
+          apiError.status = response.status;
+          apiError.payload = payload;
+          throw apiError;
+        }
+
+        keyCooldowns.delete(apiKey);
+        console.log(`Gemini ${operation} succeeded with ${keyLabel}.`);
+        return { payload, keyLabel };
+      } catch (error) {
+        lastError = error;
+        const effectiveStatus = error?.status || status;
+        const retryable = shouldTryAnotherKey(effectiveStatus, error);
+        sawRetryableFailure = sawRetryableFailure || retryable;
+
+        console.error("GEMINI_REQUEST_ERROR:", {
+          operation,
+          round,
+          keyLabel,
+          status: effectiveStatus,
+          name: error?.name,
+          message: error?.message
+        });
+
+        if (isQuotaError(effectiveStatus, error?.message)) {
+          const delayMs = parseRetryDelayMs(error?.message);
+          keyCooldowns.set(apiKey, Date.now() + delayMs);
+          console.warn(
+            `Gemini ${keyLabel} rate-limited. Cooldown set for ${Math.ceil(
+              delayMs / 1000
+            )} seconds.`
+          );
+        }
+
+        if (!retryable) {
+          throw error;
+        }
+      } finally {
+        timeout.clear();
+      }
+    }
+
+    if (round >= maxRounds || !sawRetryableFailure && attemptedThisRound > 0) {
+      break;
+    }
+
+    const futureCooldowns = keys
+      .map((key) => keyCooldowns.get(key) || 0)
+      .filter((value) => value > Date.now());
+
+    const cooldownWaitMs = futureCooldowns.length
+      ? Math.max(1_000, Math.min(...futureCooldowns) - Date.now())
+      : 0;
+
+    const exponentialWaitMs = baseRetryDelayMs * 2 ** (round - 1);
+    const waitMs = Math.min(
+      65_000,
+      Math.max(cooldownWaitMs, exponentialWaitMs)
+    );
+
+    console.warn(
+      `All available Gemini keys failed or are cooling down for ${operation}. ` +
+        `Waiting ${Math.ceil(waitMs / 1000)} seconds before retry round ${round + 1}.`
+    );
+    await wait(waitMs);
+  }
+
+  throw new Error(
+    `Gemini service is temporarily unavailable after retries: ${
+      lastError?.message || "all configured keys are cooling down"
+    }`
+  );
 }
 
 function wait(milliseconds) {
@@ -115,22 +303,13 @@ function extractResponseText(payload) {
   return parts.map((part) => part?.text || "").join("").trim();
 }
 
-function shouldRetry(status, error) {
-  if (error?.name === "AbortError") return true;
-  if (!status) return true;
-  return status === 429 || status >= 500;
-}
-
 export async function analyzeLeadWithGemini({
   lead,
   transcript,
   answers,
   declinedAtOpening = false
 }) {
-  const apiKey = requiredEnv("GEMINI_API_KEY");
   const model = String(process.env.GEMINI_MODEL || "gemini-2.5-flash").trim();
-  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
-
   const requestBody = {
     contents: [
       {
@@ -149,80 +328,32 @@ export async function analyzeLeadWithGemini({
     }
   };
 
-  let lastError = null;
+  const { payload, keyLabel } = await requestGemini({
+    requestBody,
+    model,
+    timeoutMs: 30_000,
+    operation: "final-analysis"
+  });
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const timeout = createTimeoutController(30000);
-    let status = 0;
-
-    try {
-      console.log(`Gemini analysis attempt ${attempt} using ${model}.`);
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify(requestBody),
-        signal: timeout.controller.signal
-      });
-
-      status = response.status;
-      const rawBody = await response.text();
-      let payload = {};
-
-      try {
-        payload = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
-        payload = { rawBody };
-      }
-
-      if (!response.ok) {
-        const message =
-          payload?.error?.message ||
-          payload?.message ||
-          `Gemini returned HTTP ${response.status}`;
-        const apiError = new Error(message);
-        apiError.status = response.status;
-        throw apiError;
-      }
-
-      const responseText = extractResponseText(payload);
-      if (!responseText) {
-        throw new Error("Gemini returned an empty structured response.");
-      }
-
-      let analysis;
-      try {
-        analysis = JSON.parse(responseText);
-      } catch {
-        throw new Error("Gemini returned invalid JSON.");
-      }
-
-      return {
-        analysis,
-        model,
-        usageMetadata: payload?.usageMetadata || null,
-        finishReason: payload?.candidates?.[0]?.finishReason || "unknown"
-      };
-    } catch (error) {
-      lastError = error;
-      console.error("GEMINI_ANALYSIS_ERROR:", {
-        attempt,
-        status: error?.status || status,
-        name: error?.name,
-        message: error?.message
-      });
-
-      if (attempt === 3 || !shouldRetry(error?.status || status, error)) break;
-      await wait(attempt * 1500);
-    } finally {
-      timeout.clear();
-    }
+  const responseText = extractResponseText(payload);
+  if (!responseText) {
+    throw new Error("Gemini returned an empty structured response.");
   }
 
-  throw new Error(`Gemini analysis failed: ${lastError?.message || "Unknown error"}`);
+  let analysis;
+  try {
+    analysis = JSON.parse(responseText);
+  } catch {
+    throw new Error("Gemini returned invalid JSON.");
+  }
+
+  return {
+    analysis,
+    model,
+    keyLabel,
+    usageMetadata: payload?.usageMetadata || null,
+    finishReason: payload?.candidates?.[0]?.finishReason || "unknown"
+  };
 }
 
 
@@ -283,11 +414,24 @@ export async function validateAnswerWithGemini({
   attempt = 1,
   previousAttempts = []
 }) {
-  const apiKey = requiredEnv("GEMINI_API_KEY");
   const model = String(process.env.GEMINI_MODEL || "gemini-2.5-flash").trim();
-  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
   const requestBody = {
-    contents: [{ role: "user", parts: [{ text: buildValidationPrompt({ questionKey, questionLabel, answer, attempt, previousAttempts }) }] }],
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: buildValidationPrompt({
+              questionKey,
+              questionLabel,
+              answer,
+              attempt,
+              previousAttempts
+            })
+          }
+        ]
+      }
+    ],
     generationConfig: {
       temperature: 0,
       responseMimeType: "application/json",
@@ -295,31 +439,32 @@ export async function validateAnswerWithGemini({
     }
   };
 
-  const timeout = createTimeoutController(15000);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(requestBody),
-      signal: timeout.controller.signal
-    });
-    const rawBody = await response.text();
-    let payload = {};
-    try { payload = rawBody ? JSON.parse(rawBody) : {}; } catch { payload = { rawBody }; }
-    if (!response.ok) {
-      throw new Error(payload?.error?.message || `Gemini returned HTTP ${response.status}`);
-    }
-    const responseText = extractResponseText(payload);
-    if (!responseText) throw new Error("Gemini returned an empty validation response.");
-    const result = JSON.parse(responseText);
-    return {
-      relevant: result.relevant === true,
-      relevanceScore: Math.max(0, Math.min(100, Number(result.relevance_score) || 0)),
-      normalizedAnswer: safeText(result.normalized_answer),
-      reason: safeText(result.short_reason, "No reason provided"),
-      model
-    };
-  } finally {
-    timeout.clear();
+  const { payload, keyLabel } = await requestGemini({
+    requestBody,
+    model,
+    timeoutMs: 15_000,
+    operation: `answer-validation:${questionKey}`
+  });
+
+  const responseText = extractResponseText(payload);
+  if (!responseText) {
+    throw new Error("Gemini returned an empty validation response.");
   }
+
+  let result;
+  try {
+    result = JSON.parse(responseText);
+  } catch {
+    throw new Error("Gemini returned invalid validation JSON.");
+  }
+
+  return {
+    relevant: result.relevant === true,
+    relevanceScore: Math.max(0, Math.min(100, Number(result.relevance_score) || 0)),
+    normalizedAnswer: safeText(result.normalized_answer),
+    reason: safeText(result.short_reason, "No reason provided"),
+    model,
+    keyLabel
+  };
 }
+

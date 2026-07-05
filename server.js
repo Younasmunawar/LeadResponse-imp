@@ -7,7 +7,11 @@ import mongoose from "mongoose";
 
 import Lead from "./models/Lead.js";
 import { sendLeadEmail } from "./services/email.js";
-import { analyzeLeadWithGemini, validateAnswerWithGemini } from "./services/gemini.js";
+import {
+  analyzeLeadWithGemini,
+  validateAnswerWithGemini,
+  getGeminiKeyCount
+} from "./services/gemini.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -305,8 +309,7 @@ app.post("/api/validate-answer", async (req, res) => {
     console.error("GEMINI_ANSWER_VALIDATION_FAILED:", error.message);
     return res.json({
       success: true,
-      validation: fallbackAnswerValidation(String(questionKey), String(answer)),
-      warning: "Gemini validation failed; conservative local fallback was used."
+      validation: fallbackAnswerValidation(String(questionKey), String(answer))
     });
   }
 });
@@ -319,7 +322,8 @@ app.get("/health", (_req, res) => {
     emailConfigured: Boolean(
       process.env.BREVO_API_KEY && process.env.EMAIL_FROM && process.env.EMAIL_TO
     ),
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiConfigured: getGeminiKeyCount() > 0,
+    geminiKeyCount: getGeminiKeyCount(),
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     time: new Date().toISOString()
   });
@@ -478,6 +482,7 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
         model: geminiResult.model,
         finishReason: geminiResult.finishReason,
         usageMetadata: geminiResult.usageMetadata,
+        keyLabel: geminiResult.keyLabel,
         answers,
         qualification,
         analysis: data
@@ -521,17 +526,18 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
       lead.summary = buildRecordedSummary(lead);
       lead.nextStep = declinedAtOpening
         ? "Customer declined the qualification at the opening. Follow up only if appropriate."
-        : "Gemini analysis was unavailable. Review the transcript and contact the lead manually.";
+        : "Review the transcript and contact the lead manually.";
       lead.bestFollowUpTime = declinedAtOpening
         ? "Do not call automatically"
         : String(answers.followUpTime || "unknown").trim();
       lead.status = "completed";
-      lead.processingError = `Gemini analysis failed; local fallback saved: ${geminiError.message}`;
+      // Keep provider failures in server logs only. Do not expose API or quota
+      // details in the dashboard or customer-facing responses.
+      lead.processingError = "";
       lead.rawStructuredOutput = {
         source: "local-fallback",
         answers,
-        qualification,
-        geminiError: geminiError.message
+        qualification
       };
     }
 
@@ -539,14 +545,13 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
     await sendEmailIfNeeded(lead);
 
     const analysisProvider = lead.rawStructuredOutput?.source || "unknown";
-    const analysisLabel = analysisProvider === "gemini" ? "Gemini analysis" : "fallback analysis";
 
     res.json({
       success: true,
       analysisProvider,
       message: lead.emailSent
-        ? `Call complete. ${analysisLabel} saved and email sent.`
-        : `Call complete. ${analysisLabel} saved; check email configuration if no email arrived.`,
+        ? "Call complete. Lead saved and email sent."
+        : "Call complete. Lead saved successfully.",
       lead
     });
   } catch (error) {

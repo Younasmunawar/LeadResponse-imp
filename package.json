@@ -1,6 +1,6 @@
 {
   "name": "kenny-original-voice-gemini-agent",
-  "version": "9.0.0",
+  "version": "14.0.0",
   "description": "Kenny's original prerecorded voice lead agent with Gemini structured analysis, MongoDB, and Brevo.",
   "type": "module",
   "main": "server.js",

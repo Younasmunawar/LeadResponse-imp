@@ -36,7 +36,8 @@ The result is saved in MongoDB, shown on the dashboard, and included in the Brev
 ```env
 NODE_ENV=production
 MONGO_URI=your_complete_mongodb_atlas_uri
-GEMINI_API_KEY=your_real_gemini_key
+GEMINI_API_KEY_PRIMARY=your_primary_gemini_key
+GEMINI_API_KEY_SECONDARY=your_secondary_gemini_key
 GEMINI_MODEL=gemini-2.5-flash
 BREVO_API_KEY=your_brevo_key
 EMAIL_FROM=your_verified_brevo_sender
@@ -72,3 +73,27 @@ Open `/health`. It should show:
 ## Failure behavior
 
 If Gemini is temporarily unavailable, the backend still saves the transcript and deterministic browser answers using a local fallback. The dashboard record will contain a `processingError` explaining that Gemini failed, so the lead is not lost.
+
+## Two-key failover
+
+This build supports two server-side Gemini API keys:
+
+```env
+GEMINI_API_KEY_PRIMARY=first_key
+GEMINI_API_KEY_SECONDARY=second_key
+```
+
+Requests start in round-robin order. If one key returns HTTP 429, a network error, or a temporary 5xx error, the backend automatically tries the other key. A rate-limited key is placed on a temporary cooldown based on Gemini's retry message. API keys are never returned to the browser or printed in logs.
+
+Both keys must be used in accordance with the applicable Google account/project terms and quotas. Two keys improve availability but do not guarantee unlimited requests.
+
+## Automatic retry when both keys fail
+
+The backend tries both keys. If both are temporarily unavailable, it waits for the provider cooldown (or an exponential delay) and retries. Detailed Gemini errors appear only in Render/Railway logs and are not displayed to website users.
+
+Optional settings:
+
+```env
+GEMINI_RETRY_ROUNDS=3
+GEMINI_RETRY_DELAY_MS=5000
+```

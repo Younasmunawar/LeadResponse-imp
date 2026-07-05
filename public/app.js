@@ -463,7 +463,7 @@ function clarificationAudioFor(attempt) {
 }
 
 async function validateAnswerForStep(step, rawAnswer, attempt, previousAttempts = []) {
-  setCallState(`Checking answer relevance with Gemini (${attempt}/3)...`);
+  setCallState(`Checking your answer (${attempt}/3)...`);
   const result = await postJson("/api/validate-answer", {
     questionKey: step.key,
     questionLabel: step.label,
