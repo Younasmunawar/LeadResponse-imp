@@ -27,3 +27,6 @@ npm start
 - Restored complete responsive dashboard styling.
 - Active call interface now closes automatically after a completed call, declined flow, or manual End Call save.
 - Expanded the public feature explanation for accessible voice and typed responses.
+
+## v17 mobile End Call fix
+The active call screen now uses the dynamic mobile viewport height (`100dvh`), safe-area padding, internal scrolling, and a sticky End Call control so the button remains fully visible on small phones and devices with browser/navigation bars.

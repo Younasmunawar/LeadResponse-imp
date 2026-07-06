@@ -6,3 +6,66 @@
 .site-header{width:min(100% - 36px,1040px);margin:auto;padding:26px 0;display:flex;align-items:center;justify-content:space-between}.site-header .brand{font-size:1rem;font-weight:900}.site-header .nav-link{color:var(--purple-dark);font-size:.9rem;font-weight:800;text-decoration:none}.dashboard-shell{width:min(100% - 36px,1040px);margin:auto;padding:38px 0 90px}.dashboard-header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:28px}.dashboard-header h1{margin:8px 0 12px;font-size:clamp(2.2rem,5vw,4.5rem);line-height:1;letter-spacing:-.05em}.eyebrow{text-transform:uppercase;letter-spacing:.12em;color:var(--purple);font-size:.72rem;font-weight:900}.dashboard-note{max-width:760px;margin:0;color:var(--muted);line-height:1.65}.dashboard-actions{display:flex;gap:10px;flex-wrap:wrap}.refresh-button{border:1px solid var(--line);border-radius:11px;padding:11px 16px;background:#fff;color:var(--text);font-weight:850;cursor:pointer}.export-button{border-color:transparent;background:linear-gradient(135deg,#805ad5,#6841bb);color:#fff}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0 0 22px}.summary-card{display:grid;gap:5px;padding:22px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 12px 34px rgba(72,46,120,.08)}.summary-card strong{font-size:2rem}.summary-card span{color:var(--muted)}.lead-list{display:grid;gap:18px}.lead-card{padding:24px;border:1px solid var(--line);border-left:6px solid #a99bbc;border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 14px 40px rgba(72,46,120,.08)}.lead-card.hot{border-left-color:#e33d49}.lead-card.warm{border-left-color:#ed9d28}.lead-card.cold{border-left-color:#7890a5}.lead-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:20px}.lead-topline h2{margin:0 0 6px;font-size:1.45rem}.lead-actions{display:flex;align-items:center;gap:9px}.badge{padding:7px 10px;border-radius:999px;background:#f1eef5;text-transform:uppercase;font-size:.7rem;font-weight:900}.delete-button{border:1px solid #f1bcc2;border-radius:9px;padding:8px 11px;background:#fff6f7;color:#b42335;font-weight:850;cursor:pointer}.meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px 22px;margin-bottom:18px}.meta-item{color:#5f586e;overflow-wrap:anywhere}.meta-item strong{color:var(--text)}.lead-card p{color:#4f485c;line-height:1.65}.lead-card details{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}.lead-card summary{cursor:pointer;font-weight:800}.lead-card pre{white-space:pre-wrap;max-height:320px;overflow:auto;padding:14px;border-radius:12px;background:#f8f5fc;color:#51495e;font:inherit;font-size:.85rem;line-height:1.55}.empty-state{padding:28px;border:1px dashed #cfc4df;border-radius:16px;text-align:center;color:var(--muted);background:rgba(255,255,255,.7)}
 @media(max-width:820px){.dashboard-header{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:repeat(2,1fr)}.meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.site-header,.dashboard-shell{width:min(100% - 26px,1040px)}.dashboard-shell{padding-top:24px}.summary-grid{grid-template-columns:1fr 1fr}.summary-card{padding:17px}.summary-card strong{font-size:1.55rem}.lead-card{padding:18px 15px}.lead-topline{flex-direction:column}.meta-grid{grid-template-columns:1fr}.dashboard-actions{width:100%}.refresh-button{flex:1}.dashboard-header h1{font-size:2.55rem}}
+
+/* v17: keep the End call control fully visible on mobile viewports */
+@media (max-width:700px){
+  .phone-overlay{
+    align-items:stretch;
+    min-height:100dvh;
+    height:100dvh;
+    overflow:hidden;
+  }
+
+  .phone-device,
+  .active-device{
+    width:100%;
+    height:100dvh;
+    min-height:0;
+    max-height:100dvh;
+    border-radius:0;
+  }
+
+  .active-device{
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    padding:18px 18px calc(14px + env(safe-area-inset-bottom));
+  }
+
+  .active-call-head{
+    margin:18px 0 12px;
+  }
+
+  .audio-visualizer{
+    margin:10px;
+  }
+
+  .transcript-card pre{
+    max-height:110px;
+  }
+
+  .end-call-button{
+    position:sticky;
+    bottom:calc(8px + env(safe-area-inset-bottom));
+    z-index:20;
+    flex:0 0 auto;
+    margin:14px auto 0;
+    min-height:48px;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);
+  }
+}
+
+@media (max-width:430px){
+  .active-device{
+    padding-left:14px;
+    padding-right:14px;
+  }
+
+  .answer-panel,
+  .transcript-card{
+    flex:0 0 auto;
+  }
+
+  .end-call-button{
+    width:min(100%,220px);
+  }
+}
