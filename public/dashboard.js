@@ -25,6 +25,11 @@ function leadCard(lead) {
   const answered = Number(lead.answeredQuestionCount || 0);
   const possible = Number(lead.possibleQuestionCount || 0);
   const scoreText = possible > 0 ? `${answered}/${possible}` : String(answered);
+  const qualification = lead.rawStructuredOutput?.qualification || {};
+  const positiveCount = Number(lead.positiveAnswerCount ?? qualification.positiveCount ?? 0);
+  const neutralCount = Number(lead.neutralAnswerCount ?? qualification.neutralCount ?? 0);
+  const negativeCount = Number(lead.negativeAnswerCount ?? qualification.negativeCount ?? 0);
+  const effectiveScore = Number(lead.effectiveQualificationScore ?? qualification.effectiveScore ?? 0);
 
   const items = [
     ["Phone", lead.phone],
@@ -37,7 +42,9 @@ function leadCard(lead) {
     ["Payment", lead.paymentMethod],
     ["WhatsApp", lead.whatsappNumber],
     ["Follow-up time", lead.bestFollowUpTime],
-    ["Positive answers", scoreText],
+    ["Answered questions", scoreText],
+    ["Positive / Neutral / Negative", `${positiveCount} / ${neutralCount} / ${negativeCount}`],
+    ["Qualification score", effectiveScore],
     ["Sentiment", lead.callerSentiment],
     ["Status", lead.status],
     ["Analysis", lead.rawStructuredOutput?.source || "unknown"]

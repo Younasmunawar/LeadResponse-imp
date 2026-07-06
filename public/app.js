@@ -575,13 +575,18 @@ async function collectValidatedAnswer(step) {
       relevant: validation.relevant === true,
       relevanceScore: Number(validation.relevanceScore) || 0,
       normalizedAnswer: String(validation.normalizedAnswer || rawAnswer).trim() || "unknown",
+      classification: ["positive", "neutral", "negative", "irrelevant"].includes(validation.classification)
+        ? validation.classification
+        : (validation.relevant === true ? "neutral" : "irrelevant"),
+      confidence: Number(validation.confidence) || 0,
+      hardNegative: validation.hardNegative === true,
       reason: String(validation.reason || "")
     };
     attempts.push(candidate);
 
     addTranscript(
       "System",
-      `${step.label} validation: ${candidate.relevant ? "relevant" : "not relevant"} (${candidate.relevanceScore}/100)`
+      `${step.label} validation: ${candidate.classification} / ${candidate.relevant ? "relevant" : "not relevant"} (${candidate.relevanceScore}/100)`
     );
 
     if (candidate.relevant) {
@@ -648,26 +653,45 @@ function isMeaningfulAnswer(value) {
   ].includes(normalized);
 }
 
-function calculateLeadScore() {
-  // Property type and follow-up time are deliberately excluded.
-  const validated = (key) => answers?._validation?.[key]?.forcedClosestMatch !== true;
-  const checks = [
-    ["intent", validated("intent") && ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
-    ["purpose", validated("purpose") && isMeaningfulAnswer(answers.purpose)],
-    ["preferredArea", validated("preferredArea") && isMeaningfulAnswer(answers.preferredArea)],
-    ["budget", validated("budget") && isMeaningfulAnswer(answers.budget)],
-    ["timeline", validated("timeline") && isMeaningfulAnswer(answers.timeline)],
-    ["paymentMethod", validated("paymentMethod") && ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
-    ["whatsappConsent", validated("whatsappConsent") && String(answers.whatsappConsent || "").toLowerCase() === "yes"]
-  ];
+function validationClassification(key) {
+  const entry = answers?._validation?.[key];
+  const candidate = entry?.validation || entry;
+  const classification = String(candidate?.classification || "").toLowerCase();
+  if (["positive", "neutral", "negative", "irrelevant"].includes(classification)) return classification;
+  if (entry?.forcedClosestMatch === true) return "irrelevant";
+  return "irrelevant";
+}
 
-  const applicable = checks.filter(([key]) => !(key === "paymentMethod" && answers.intent === "lease"));
-  const answeredCount = applicable.filter(([, passed]) => passed).length;
+function calculateLeadScore() {
+  const metricKeys = ["intent", "purpose", "preferredArea", "budget", "timeline", "paymentMethod", "whatsappConsent"]
+    .filter((key) => !(key === "paymentMethod" && answers.intent === "lease"));
+  const classifications = metricKeys.map((key) => [key, validationClassification(key)]);
+  const positiveCount = classifications.filter(([, value]) => value === "positive").length;
+  const neutralCount = classifications.filter(([, value]) => value === "neutral").length;
+  const negativeCount = classifications.filter(([, value]) => value === "negative").length;
+  const answeredCount = classifications.filter(([, value]) => value !== "irrelevant").length;
+  const effectiveScore = positiveCount + (neutralCount * 0.5) - negativeCount;
+  const hardNegative = metricKeys.some((key) => {
+    const entry = answers?._validation?.[key];
+    const candidate = entry?.validation || entry;
+    return candidate?.hardNegative === true;
+  });
+
+  let leadQuality = "cold";
+  if (!hardNegative) {
+    if (effectiveScore >= 5 && positiveCount >= 4) leadQuality = "hot";
+    else if (effectiveScore >= 3) leadQuality = "warm";
+  }
 
   return {
     answeredCount,
-    possibleCount: applicable.length,
-    leadQuality: answeredCount >= 5 ? "hot" : answeredCount >= 4 ? "warm" : "cold"
+    possibleCount: metricKeys.length,
+    positiveCount,
+    neutralCount,
+    negativeCount,
+    effectiveScore,
+    hardNegative,
+    leadQuality
   };
 }
 

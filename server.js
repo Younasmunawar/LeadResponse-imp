@@ -10,8 +10,10 @@ import { sendLeadEmail } from "./services/email.js";
 import {
   analyzeLeadWithGemini,
   validateAnswerWithGemini,
-  getGeminiKeyCount
+  getGeminiKeyCount,
+  getGeminiPoolInfo
 } from "./services/gemini.js";
+import { validateAnswerLocally } from "./services/localValidation.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -48,41 +50,88 @@ function isMeaningfulAnswer(value) {
   ].includes(normalized);
 }
 
+function validationClassification(answers, key) {
+  const entry = answers?._validation?.[key];
+  const candidate = entry?.validation || entry;
+  const classification = String(candidate?.classification || "").toLowerCase();
+  if (["positive", "neutral", "negative", "irrelevant"].includes(classification)) return classification;
+  if (entry?.forcedClosestMatch === true) return "irrelevant";
+  return "irrelevant";
+}
+
 function calculateQualificationScore(answers = {}, declinedAtOpening = false) {
   if (declinedAtOpening) {
     return {
       answeredCount: 0,
       possibleCount: 0,
+      positiveCount: 0,
+      neutralCount: 0,
+      negativeCount: 1,
+      effectiveScore: -2,
       leadQuality: "cold",
-      positiveMetrics: []
+      positiveMetrics: [],
+      neutralMetrics: [],
+      negativeMetrics: ["consent"],
+      hardNegative: true
     };
   }
 
-  // Property type and follow-up time are intentionally excluded.
-  // An answer selected only as the closest of three irrelevant attempts is stored,
-  // but it does not count as a positive qualification answer.
-  const validated = (key) => answers?._validation?.[key]?.forcedClosestMatch !== true;
-  const checks = [
-    ["intent", validated("intent") && ["buy", "lease"].includes(String(answers.intent || "").toLowerCase())],
-    ["purpose", validated("purpose") && isMeaningfulAnswer(answers.purpose)],
-    ["preferredArea", validated("preferredArea") && isMeaningfulAnswer(answers.preferredArea)],
-    ["budget", validated("budget") && isMeaningfulAnswer(answers.budget)],
-    ["timeline", validated("timeline") && isMeaningfulAnswer(answers.timeline)],
-    ["paymentMethod", validated("paymentMethod") && ["cash", "finance"].includes(String(answers.paymentMethod || "").toLowerCase())],
-    ["whatsappConsent", validated("whatsappConsent") && String(answers.whatsappConsent || "").toLowerCase() === "yes"]
-  ];
+  // Property type and follow-up time are excluded from the direct quality score.
+  const metricKeys = ["intent", "purpose", "preferredArea", "budget", "timeline", "paymentMethod", "whatsappConsent"]
+    .filter((key) => !(key === "paymentMethod" && answers.intent === "lease"));
 
-  // Payment is not asked for lease leads, so it is not part of the possible count.
-  const applicableChecks = checks.filter(([key]) => !(key === "paymentMethod" && answers.intent === "lease"));
-  const positiveMetrics = applicableChecks.filter(([, passed]) => passed).map(([key]) => key);
-  const answeredCount = positiveMetrics.length;
+  const classifications = metricKeys.map((key) => [key, validationClassification(answers, key)]);
+  const positiveMetrics = classifications.filter(([, value]) => value === "positive").map(([key]) => key);
+  const neutralMetrics = classifications.filter(([, value]) => value === "neutral").map(([key]) => key);
+  const negativeMetrics = classifications.filter(([, value]) => value === "negative").map(([key]) => key);
+  const answeredCount = classifications.filter(([, value]) => value !== "irrelevant").length;
+  const positiveCount = positiveMetrics.length;
+  const neutralCount = neutralMetrics.length;
+  const negativeCount = negativeMetrics.length;
+  const effectiveScore = positiveCount + (neutralCount * 0.5) - negativeCount;
+
+  const hardNegative = classifications.some(([key]) => {
+    const entry = answers?._validation?.[key];
+    const candidate = entry?.validation || entry;
+    return candidate?.hardNegative === true;
+  });
+
+  let leadQuality = "cold";
+  if (!hardNegative) {
+    if (effectiveScore >= 5 && positiveCount >= 4) leadQuality = "hot";
+    else if (effectiveScore >= 3) leadQuality = "warm";
+  }
 
   return {
     answeredCount,
-    possibleCount: applicableChecks.length,
-    leadQuality: answeredCount >= 5 ? "hot" : answeredCount >= 4 ? "warm" : "cold",
-    positiveMetrics
+    possibleCount: metricKeys.length,
+    positiveCount,
+    neutralCount,
+    negativeCount,
+    effectiveScore,
+    leadQuality,
+    positiveMetrics,
+    neutralMetrics,
+    negativeMetrics,
+    hardNegative
   };
+}
+
+function applyGeminiQualityRecommendation(qualification, data = {}) {
+  if (qualification.hardNegative) return "cold";
+
+  const recommendation = normalizeEnum(data.lead_quality, ["hot", "warm", "cold"], qualification.leadQuality);
+  const confidence = Math.max(0, Math.min(100, Number(data.qualification_confidence) || 0));
+  let quality = qualification.leadQuality;
+
+  // Gemini acts as a bounded tie-breaker rather than replacing hard local evidence.
+  if (confidence >= 80) {
+    if (quality === "warm" && recommendation === "hot" && qualification.positiveCount >= 4 && qualification.negativeCount === 0) quality = "hot";
+    else if (quality === "hot" && recommendation === "warm") quality = "warm";
+    else if (quality === "cold" && recommendation === "warm" && qualification.positiveCount >= 2 && qualification.negativeCount === 0) quality = "warm";
+    else if (recommendation === "cold" && qualification.negativeCount >= 2) quality = "cold";
+  }
+  return quality;
 }
 
 function transcriptFromPayload(payload = {}) {
@@ -260,56 +309,48 @@ async function sendEmailIfNeeded(lead) {
 
 
 
-function fallbackAnswerValidation(questionKey, answer) {
-  const text = String(answer || "").trim();
-  const lower = text.toLowerCase();
-  let relevant = false;
-
-  if (questionKey === "consent" || questionKey === "whatsappConsent") {
-    relevant = /\b(yes|yeah|yep|sure|okay|ok|of course|no|nope|nah|not now|stop|another number)\b/.test(lower) || /\+?\d[\d\s-]{6,}/.test(text);
-  } else if (questionKey === "intent") {
-    relevant = /\b(buy|purchase|lease|rent)\b/.test(lower);
-  } else if (questionKey === "purpose") {
-    relevant = /\b(personal|myself|live|family|business|office|commercial|invest|investment)\b/.test(lower);
-  } else if (questionKey === "preferredArea") {
-    relevant = /\b(area|dubai|bay|marina|downtown|jvc|jlt|palm|creek|hills|ranch|suggest|anywhere|any area|open)\b/.test(lower);
-  } else if (questionKey === "budget") {
-    relevant = /\d/.test(text) || /\b(aed|dirham|million|thousand|budget|unsure|don't know|no budget)\b/.test(lower);
-  } else if (questionKey === "timeline") {
-    relevant = /\b(today|tomorrow|immediately|asap|soon|week|weeks|month|months|year|years|later|date|quarter|ready now)\b/.test(lower) || /\d/.test(text);
-  } else if (questionKey === "paymentMethod") {
-    relevant = /\b(cash|finance|mortgage|loan|installment|instalment)\b/.test(lower);
-  }
-
-  return {
-    relevant,
-    relevanceScore: relevant ? 70 : 10,
-    normalizedAnswer: text || "unknown",
-    reason: "Local fallback validation was used.",
-    fallback: true
-  };
-}
-
 app.post("/api/validate-answer", async (req, res) => {
   const { questionKey, questionLabel, answer, attempt, previousAttempts } = req.body || {};
   if (!questionKey || !answer) {
     return res.status(400).json({ success: false, message: "questionKey and answer are required." });
   }
 
+  const key = String(questionKey);
+  const rawAnswer = String(answer);
+  const local = validateAnswerLocally(key, rawAnswer);
+
+  // High-confidence local answers are accepted or rejected immediately.
+  // Gemini is only used for genuinely ambiguous answers.
+  if (local.handled) {
+    console.log(`LOCAL_VALIDATION:${key}`, {
+      relevant: local.relevant,
+      score: local.relevanceScore,
+      normalizedAnswer: local.normalizedAnswer
+    });
+    return res.json({ success: true, validation: local });
+  }
+
   try {
     const validation = await validateAnswerWithGemini({
-      questionKey: String(questionKey),
-      questionLabel: String(questionLabel || questionKey),
-      answer: String(answer),
+      questionKey: key,
+      questionLabel: String(questionLabel || key),
+      answer: rawAnswer,
       attempt: Number(attempt) || 1,
       previousAttempts: Array.isArray(previousAttempts) ? previousAttempts : []
     });
     return res.json({ success: true, validation });
   } catch (error) {
+    // Provider details stay in server logs. The browser receives only a normal
+    // validation result so the live call can continue without technical errors.
     console.error("GEMINI_ANSWER_VALIDATION_FAILED:", error.message);
     return res.json({
       success: true,
-      validation: fallbackAnswerValidation(String(questionKey), String(answer))
+      validation: {
+        ...local,
+        handled: true,
+        source: "local-fallback",
+        reason: local.reason || "Local fallback validation was used."
+      }
     });
   }
 });
@@ -324,6 +365,9 @@ app.get("/health", (_req, res) => {
     ),
     geminiConfigured: getGeminiKeyCount() > 0,
     geminiKeyCount: getGeminiKeyCount(),
+    ...getGeminiPoolInfo(),
+    validationTimeoutMs: Number(process.env.GEMINI_VALIDATION_TIMEOUT_MS || 2000),
+    finalizationTimeoutMs: Number(process.env.GEMINI_FINALIZATION_TIMEOUT_MS || 5000),
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     time: new Date().toISOString()
   });
@@ -485,12 +529,17 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
         "unknown"
       ]);
       lead.whatsappNumber = String(data.whatsapp_number || "unknown").trim();
-      // Lead quality is deterministic and does not depend on Gemini's opinion.
-      // 5+ positive answers = hot, 4 = warm, fewer than 4 = cold.
-      lead.leadQuality = qualification.leadQuality;
+      // Local classifications provide the base score; Gemini is a bounded tie-breaker.
+      lead.leadQuality = applyGeminiQualityRecommendation(qualification, data);
       lead.answeredQuestionCount = qualification.answeredCount;
       lead.possibleQuestionCount = qualification.possibleCount;
       lead.positiveMetrics = qualification.positiveMetrics;
+      lead.neutralMetrics = qualification.neutralMetrics;
+      lead.negativeMetrics = qualification.negativeMetrics;
+      lead.positiveAnswerCount = qualification.positiveCount;
+      lead.neutralAnswerCount = qualification.neutralCount;
+      lead.negativeAnswerCount = qualification.negativeCount;
+      lead.effectiveQualificationScore = qualification.effectiveScore;
       lead.callerSentiment = normalizeEnum(
         data.caller_sentiment,
         ["positive", "neutral", "negative", "busy", "unknown"],
@@ -542,11 +591,17 @@ app.post("/api/leads/:id/recorded-complete", async (req, res) => {
       lead.answeredQuestionCount = qualification.answeredCount;
       lead.possibleQuestionCount = qualification.possibleCount;
       lead.positiveMetrics = qualification.positiveMetrics;
-      lead.callerSentiment = normalizeEnum(
-        req.body?.callerSentiment,
-        ["positive", "neutral", "negative", "busy", "unknown"],
-        declinedAtOpening ? "negative" : "neutral"
-      );
+      lead.neutralMetrics = qualification.neutralMetrics;
+      lead.negativeMetrics = qualification.negativeMetrics;
+      lead.positiveAnswerCount = qualification.positiveCount;
+      lead.neutralAnswerCount = qualification.neutralCount;
+      lead.negativeAnswerCount = qualification.negativeCount;
+      lead.effectiveQualificationScore = qualification.effectiveScore;
+      lead.callerSentiment = declinedAtOpening || qualification.hardNegative || qualification.negativeCount >= 2
+        ? "negative"
+        : qualification.positiveCount > (qualification.neutralCount + qualification.negativeCount)
+          ? "positive"
+          : "neutral";
       lead.summary = buildRecordedSummary(lead);
       lead.nextStep = declinedAtOpening
         ? "Customer declined the qualification at the opening. Follow up only if appropriate."
@@ -661,6 +716,12 @@ app.post("/api/leads/recalculate-scores", async (_req, res) => {
         lead.answeredQuestionCount = qualification.answeredCount;
         lead.possibleQuestionCount = qualification.possibleCount;
         lead.positiveMetrics = qualification.positiveMetrics;
+        lead.neutralMetrics = qualification.neutralMetrics;
+        lead.negativeMetrics = qualification.negativeMetrics;
+        lead.positiveAnswerCount = qualification.positiveCount;
+        lead.neutralAnswerCount = qualification.neutralCount;
+        lead.negativeAnswerCount = qualification.negativeCount;
+        lead.effectiveQualificationScore = qualification.effectiveScore;
         lead.rawStructuredOutput = {
           ...lead.rawStructuredOutput,
           qualification
@@ -692,9 +753,9 @@ app.get("/api/leads/export.csv", async (_req, res) => {
     const leads = await Lead.find().sort({ createdAt: -1 }).lean();
     const headers = [
       "Created At", "Name", "Phone", "Email", "Quality", "Answered Count",
-      "Possible Count", "Intent", "Purpose", "Area", "Budget", "Timeline",
-      "Payment", "WhatsApp", "Sentiment", "Status", "Analysis", "Summary",
-      "Next Step", "Transcript"
+      "Possible Count", "Positive Count", "Neutral Count", "Negative Count", "Effective Score",
+      "Intent", "Purpose", "Area", "Budget", "Timeline", "Payment", "WhatsApp",
+      "Sentiment", "Status", "Analysis", "Summary", "Next Step", "Transcript"
     ];
 
     const csvCell = (value) => {
@@ -705,9 +766,11 @@ app.get("/api/leads/export.csv", async (_req, res) => {
     const rows = leads.map((lead) => [
       lead.createdAt ? new Date(lead.createdAt).toISOString() : "",
       lead.name, lead.phone, lead.email, lead.leadQuality,
-      lead.answeredQuestionCount, lead.possibleQuestionCount, lead.intent,
-      lead.purpose, lead.preferredArea, lead.budget, lead.timeline,
-      lead.paymentMethod, lead.whatsappNumber, lead.callerSentiment, lead.status,
+      lead.answeredQuestionCount, lead.possibleQuestionCount,
+      lead.positiveAnswerCount, lead.neutralAnswerCount, lead.negativeAnswerCount,
+      lead.effectiveQualificationScore, lead.intent, lead.purpose, lead.preferredArea,
+      lead.budget, lead.timeline, lead.paymentMethod, lead.whatsappNumber,
+      lead.callerSentiment, lead.status,
       lead.rawStructuredOutput?.source || "unknown", lead.summary, lead.nextStep,
       lead.transcript
     ].map(csvCell).join(","));

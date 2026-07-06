@@ -41,6 +41,12 @@ const leadSchema = new mongoose.Schema(
     answeredQuestionCount: { type: Number, default: 0 },
     possibleQuestionCount: { type: Number, default: 0 },
     positiveMetrics: { type: [String], default: [] },
+    neutralMetrics: { type: [String], default: [] },
+    negativeMetrics: { type: [String], default: [] },
+    positiveAnswerCount: { type: Number, default: 0 },
+    neutralAnswerCount: { type: Number, default: 0 },
+    negativeAnswerCount: { type: Number, default: 0 },
+    effectiveQualificationScore: { type: Number, default: 0 },
     callerSentiment: {
       type: String,
       enum: ["positive", "neutral", "negative", "busy", "unknown"],
