@@ -104,3 +104,8 @@ GEMINI_FINALIZATION_KEY_1=
 GEMINI_FINALIZATION_KEY_2=
 GEMINI_FINALIZATION_TIMEOUT_MS=5000
 ```
+
+
+## V21 reliability update
+
+See `V21_UPDATE_NOTES.md` for microphone recognition and low-budget clarification changes.

@@ -28,6 +28,7 @@ const callTimer = document.getElementById("callTimer");
 let currentLeadId = "";
 let microphoneReady = false;
 let recognition = null;
+let recognitionGeneration = 0;
 let callRunning = false;
 let waitingForAnswer = false;
 let activeStepIndex = 0;
@@ -340,94 +341,200 @@ function startVoiceRecognition(controller) {
   }
 
   stopRecognition();
+  recognitionGeneration += 1;
+  const myGeneration = recognitionGeneration;
+
   retryVoiceButton.hidden = true;
+  retryVoiceButton.disabled = true;
+
   const listenWindowMs = 7000;
   const deadline = Date.now() + listenWindowMs;
   let finalText = "";
+  let bestInterimText = "";
   let silenceTimer = null;
+  let interimCommitTimer = null;
+  let restartTimer = null;
+  let instanceRunning = false;
+
+  const clearTimers = () => {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (interimCommitTimer) clearTimeout(interimCommitTimer);
+    if (restartTimer) clearTimeout(restartTimer);
+    silenceTimer = null;
+    interimCommitTimer = null;
+    restartTimer = null;
+  };
+
+  const isCurrent = () =>
+    !controller.settled &&
+    !manualEndRequested &&
+    myGeneration === recognitionGeneration;
+
+  const acceptBestCapturedSpeech = () => {
+    const captured = String(finalText || bestInterimText || "").trim();
+    if (!captured) return false;
+    clearTimers();
+    controller.finish(captured, "voice");
+    return true;
+  };
 
   const finishSilenceWindow = () => {
-    if (controller.settled) return;
+    if (!isCurrent()) return;
+    if (acceptBestCapturedSpeech()) return;
+
+    clearTimers();
     stopRecognition();
+    waitingForAnswer = false;
     retryVoiceButton.hidden = false;
-    answerHint.textContent = "No speech was detected. Type your answer, or select Listen again.";
+    retryVoiceButton.disabled = false;
+    answerHint.textContent =
+      "No clear speech was captured. Type your answer, or select Listen again for a fresh 7-second attempt.";
     setCallState("Waiting for a typed answer or another voice attempt...");
   };
 
+  const scheduleRestart = (delay = 180) => {
+    if (!isCurrent() || Date.now() >= deadline || instanceRunning) return;
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      startInstance();
+    }, delay);
+  };
+
   const startInstance = () => {
-    if (controller.settled || manualEndRequested || Date.now() >= deadline) {
+    if (!isCurrent()) return;
+    if (Date.now() >= deadline) {
       finishSilenceWindow();
       return;
     }
+    if (instanceRunning) return;
 
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const instance = new Recognition();
     recognition = instance;
+    instanceRunning = true;
+
     instance.lang = "en-US";
     instance.interimResults = true;
     instance.continuous = false;
-    instance.maxAlternatives = 1;
+    instance.maxAlternatives = 3;
 
     instance.onstart = () => {
-      if (controller.settled) return;
+      if (!isCurrent()) return;
       waitingForAnswer = true;
       const secondsLeft = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+      answerHint.textContent =
+        "Speak normally. Your partial speech will also be accepted if the browser does not mark it as final.";
       setCallState(`Listening for up to ${secondsLeft} seconds… You can type at any time.`);
     };
 
+    instance.onspeechstart = () => {
+      if (!isCurrent()) return;
+      setCallState("Voice detected — listening...");
+    };
+
     instance.onresult = (event) => {
-      if (controller.settled) return;
-      let interim = "";
+      if (!isCurrent()) return;
+
+      let newFinal = "";
+      let newInterim = "";
+
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const text = event.results[i][0].transcript.trim();
-        if (event.results[i].isFinal) finalText += `${text} `;
-        else interim += `${text} `;
+        const result = event.results[i];
+        let bestAlternative = result[0];
+
+        for (let j = 1; j < result.length; j += 1) {
+          if ((result[j].confidence || 0) > (bestAlternative.confidence || 0)) {
+            bestAlternative = result[j];
+          }
+        }
+
+        const transcript = String(bestAlternative?.transcript || "").trim();
+        if (!transcript) continue;
+
+        if (result.isFinal) newFinal += `${transcript} `;
+        else newInterim += `${transcript} `;
       }
+
+      if (newFinal.trim()) finalText += `${newFinal.trim()} `;
+      if (newInterim.trim()) bestInterimText = newInterim.trim();
+
       if (finalText.trim()) {
-        if (silenceTimer) clearTimeout(silenceTimer);
-        controller.finish(finalText.trim(), "voice");
+        acceptBestCapturedSpeech();
         return;
       }
-      if (interim.trim()) setCallState(`Listening: ${interim.trim()} — or type below.`);
+
+      if (bestInterimText) {
+        setCallState(`Listening: ${bestInterimText} — or type below.`);
+
+        // Some Chrome/Android sessions produce a good interim transcript but never
+        // emit a final result. Accept the stable interim after a short pause.
+        if (interimCommitTimer) clearTimeout(interimCommitTimer);
+        interimCommitTimer = setTimeout(() => {
+          if (isCurrent() && bestInterimText) acceptBestCapturedSpeech();
+        }, 1100);
+      }
     };
 
     instance.onerror = (event) => {
-      if (controller.settled) return;
+      instanceRunning = false;
+      if (!isCurrent()) return;
+
       waitingForAnswer = false;
-      recognition = null;
+      if (recognition === instance) recognition = null;
+
       if (event.error === "aborted") return;
-      if (["no-speech", "audio-capture", "network"].includes(event.error) && Date.now() < deadline) {
-        setTimeout(startInstance, 120);
+
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        clearTimers();
+        microphoneReady = false;
+        retryVoiceButton.hidden = false;
+        retryVoiceButton.disabled = false;
+        answerHint.textContent =
+          "Microphone permission is blocked. Allow it in browser settings, or type your answer.";
+        setCallState("Microphone permission is required for voice answers.");
         return;
       }
+
+      // If any interim speech was heard, keep it instead of losing the answer.
+      if (bestInterimText && ["no-speech", "network", "audio-capture"].includes(event.error)) {
+        acceptBestCapturedSpeech();
+        return;
+      }
+
+      if (["no-speech", "audio-capture", "network"].includes(event.error) && Date.now() < deadline) {
+        scheduleRestart(event.error === "audio-capture" ? 350 : 180);
+        return;
+      }
+
       finishSilenceWindow();
     };
 
     instance.onend = () => {
-      if (controller.settled) return;
+      instanceRunning = false;
+      if (!isCurrent()) return;
+
       waitingForAnswer = false;
-      recognition = null;
-      if (finalText.trim()) {
-        controller.finish(finalText.trim(), "voice");
-        return;
-      }
-      if (Date.now() < deadline) {
-        setTimeout(startInstance, 120);
-      } else {
-        finishSilenceWindow();
-      }
+      if (recognition === instance) recognition = null;
+
+      if (acceptBestCapturedSpeech()) return;
+
+      if (Date.now() < deadline) scheduleRestart(180);
+      else finishSilenceWindow();
     };
 
-    try { instance.start(); }
-    catch (error) {
-      recognition = null;
+    try {
+      instance.start();
+    } catch (error) {
+      instanceRunning = false;
+      if (recognition === instance) recognition = null;
       console.warn("Speech recognition start error:", error.message);
-      if (Date.now() < deadline) setTimeout(startInstance, 180);
+      if (Date.now() < deadline) scheduleRestart(300);
       else finishSilenceWindow();
     }
   };
 
-  silenceTimer = setTimeout(finishSilenceWindow, listenWindowMs + 250);
+  silenceTimer = setTimeout(finishSilenceWindow, listenWindowMs + 300);
   startInstance();
 }
 
@@ -462,7 +569,11 @@ function captureAnswer() {
     };
 
     retryVoiceButton.onclick = () => {
-      if (!controller.settled) startVoiceRecognition(controller);
+      if (controller.settled) return;
+      retryVoiceButton.disabled = true;
+      answerHint.textContent = "Restarting microphone… Speak after the Listening message appears.";
+      setCallState("Preparing a fresh voice attempt...");
+      setTimeout(() => startVoiceRecognition(controller), 250);
     };
 
     startVoiceRecognition(controller);

@@ -299,13 +299,13 @@ export function validateAnswerLocally(questionKey, answer, context = {}) {
 
       if (parsed?.max) {
         if (intent === "buy" && parsed.max < 100000) {
-          classification = "negative";
-          reason = "A purchase budget was provided, but it appears unlikely to be workable for the stated market.";
-          confidence = 88;
+          classification = "neutral";
+          reason = "A purchase budget was provided. It is relevant, but the agent should clarify whether this is the total budget, a deposit, or a yearly amount.";
+          confidence = 92;
         } else if (intent === "buy" && parsed.max < 300000) {
           classification = "neutral";
-          reason = "A purchase budget was provided, but it may significantly limit available options.";
-          confidence = 88;
+          reason = "A purchase budget was provided, but it may significantly limit available options and should be clarified.";
+          confidence = 90;
         } else if (intent === "lease" && parsed.max < 20000) {
           classification = "neutral";
           reason = "A leasing budget was provided, but it may significantly limit available options.";
