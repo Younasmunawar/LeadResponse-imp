@@ -1,103 +1,24 @@
-# Kenny Original Voice Agent + Gemini Analysis
+# Kenny Original Voice Agent v15
 
-A browser-based Dubai real-estate qualification agent that plays Kenny's supplied original MP3 recordings, captures customer answers, analyzes the completed call with Gemini, stores the result in MongoDB, sends a Brevo email, and displays leads in a dashboard.
+A responsive Falcon Heights Abu Dhabi private demo with an incoming-call experience, Kenny original recordings, typed and spoken replies, Gemini analysis, MongoDB, Brevo, dashboard, delete, and CSV export.
 
-## Current flow
+## New in v15
+- Polished mobile and desktop landing page with complete feature and call-flow explanation.
+- Server-enforced private access code. Default: `LEAD2026`; configure `DEMO_ACCESS_CODE` in production.
+- Invalid or missing code creates no lead and starts no call.
+- Incoming mobile-call interface with generated ringtone, Answer, and Decline controls.
+- Answering connects directly to Kenny; no confusing second start button.
+- New Falcon Heights Abu Dhabi opening recording replaces the previous opening.
+- Voice listening remains available for up to seven seconds and processes speech as soon as a final result arrives.
+- Typed answers remain available at every question and have priority when submitted.
+- Immediate End Call behavior is preserved.
 
-1. Visitor enables microphone access.
-2. Visitor submits name, phone, and optional email.
-3. Kenny's opening recording plays first.
-4. Affirmative responses such as yes, sure, or of course continue the flow.
-5. A negative opening response ends the call and saves a cold lead.
-6. The remaining original Kenny recordings ask qualification questions.
-7. The backend sends transcript + captured answers to Gemini.
-8. Gemini returns structured lead analysis.
-9. MongoDB stores the result and Brevo emails all configured recipients.
+## Required environment variables
+See `.env.example`. Do not manually set `PORT` on Render or Railway.
 
-## Main stack
-
-- Plain HTML/CSS/JavaScript
-- Browser Web Speech API
-- Node.js + Express
-- Gemini API (`gemini-2.5-flash` by default)
-- MongoDB Atlas
-- Brevo Transactional Email API
-- Railway or Render
-
-## Setup
-
+## Run
 ```bash
-cp .env.example .env
 npm install
 npm run check
 npm start
-```
-
-See `GEMINI_SETUP.md` for API-key and deployment instructions.
-
-## Required environment variables
-
-```env
-MONGO_URI=...
-GEMINI_API_KEY_PRIMARY=...
-GEMINI_API_KEY_SECONDARY=...
-GEMINI_MODEL=gemini-2.5-flash
-BREVO_API_KEY=...
-EMAIL_FROM=...
-EMAIL_FROM_NAME=Kenny Voice Agent
-EMAIL_TO=email1@example.com,email2@example.com
-```
-
-`VAPI_PUBLIC_KEY` and `VAPI_ASSISTANT_ID` are optional legacy variables and are not required by the prerecorded browser flow.
-
-## Browser support
-
-Chrome and Edge are recommended because the project uses browser speech recognition. Typed-answer fallback appears when recognition fails or is unavailable.
-
-## Security
-
-Never commit `.env`, API keys, MongoDB passwords, or customer records to GitHub.
-
-## v8 interaction improvements
-
-- The End call button now stops the active Kenny audio immediately, aborts speech recognition, and saves answers collected so far.
-- Every question supports typing and speaking at the same time.
-- A submitted typed answer has priority and immediately stops the active speech-recognition attempt.
-- If no speech is detected, the user can keep typing or press Listen again.
-
-## v9 deterministic scoring and dashboard controls
-
-Lead quality is now calculated by completed qualification answers, not by Gemini judgment:
-
-- 5 or more positive/usable answers: **hot**
-- 4 positive/usable answers: **warm**
-- fewer than 4: **cold**
-
-Property type and follow-up time are excluded from scoring. The dashboard automatically recalculates older Gemini records when opened. It also includes per-lead delete controls and CSV export.
-
-## Per-question Gemini relevance validation (v11)
-
-Every opening/qualification answer is validated by Gemini before the flow advances. A relevant answer receives the normal acknowledgement and the next question. An unrelated answer triggers the clarification recording and the same question again. After three unsuccessful attempts, the closest attempt is stored with low-confidence metadata, does not count as a positive scoring answer, and the flow moves on.
-
-
-## v12 conversation refinements
-- Hot outcome audio now collects the preferred follow-up time and stores it on the dashboard.
-- Clarification audios alternate between `11-glue-sorry-clarifier.mp3` and `12-glue-clarifier.mp3`.
-- After a clarification clip, the system listens immediately instead of replaying the question.
-- The original question is replayed only when the customer explicitly asks for it to be repeated.
-- `10-glue-wonderful.mp3` is no longer used anywhere in the conversation flow.
-
-## Gemini dual-key failover
-
-Set `GEMINI_API_KEY_PRIMARY` and `GEMINI_API_KEY_SECONDARY`. The server alternates the starting key and automatically fails over to the other key on quota, network, or temporary server errors. The legacy `GEMINI_API_KEY` variable is still accepted for a single-key deployment.
-
-## Gemini retry and private error handling
-
-If both Gemini keys are temporarily rate-limited or return a retryable server/network error, the backend waits and retries automatically. The default is three rounds. Provider errors and quota details are written only to deployment logs; they are not shown on the call page or dashboard.
-
-Optional environment variables:
-
-```env
-GEMINI_RETRY_ROUNDS=3
-GEMINI_RETRY_DELAY_MS=5000
 ```

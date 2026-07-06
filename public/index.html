@@ -3,91 +3,163 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Talk to Kenny | Falcon Heights Real Estate</title>
+  <meta name="theme-color" content="#7852c8" />
+  <title>Kenny Lead Qualification Demo | Falcon Heights Abu Dhabi</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div id="micGate" class="mic-gate" role="dialog" aria-modal="true" aria-labelledby="micGateTitle">
-    <div class="mic-gate-card">
-      <div class="mic-icon" aria-hidden="true">🎙️</div>
-      <p class="eyebrow">One quick setup</p>
-      <h2 id="micGateTitle">Enable your microphone</h2>
-      <p id="micGateText">Kenny needs microphone access to understand your answers.</p>
-      <button id="micPermissionButton" class="primary-button" type="button">Enable microphone</button>
-      <p id="micHelp" class="mic-help" hidden></p>
-    </div>
-  </div>
-
-  <header class="site-header">
-    <a class="brand" href="/">Falcon Heights</a>
-    <a class="nav-link" href="/dashboard.html">Lead dashboard</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Falcon Heights home">
+      <span class="brand-mark">F</span>
+      <span><strong>Falcon Heights</strong><small>Abu Dhabi</small></span>
+    </a>
+    <a class="dashboard-link" href="/dashboard.html">Lead dashboard</a>
   </header>
 
-  <main class="page-shell">
-    <section class="hero">
-      <p class="eyebrow">Dubai property assistance</p>
-      <h1>Tell us what you need, then talk to Kenny.</h1>
-      <p class="hero-copy">This version uses Kenny's original recorded voice for every question and closing.</p>
+  <main class="demo-shell">
+    <section class="intro-section">
+      <div class="private-badge"><span></span> Private voice-agent demo</div>
+      <h1>Hear Kenny qualify a property lead <em>live.</em></h1>
+      <p class="intro-copy">
+        Kenny uses his original recorded voice to ask focused property questions, accepts spoken or typed replies,
+        validates answers, scores the lead, saves it securely, and routes the result to your team.
+      </p>
+
+      <div class="feature-chips" aria-label="Key features">
+        <span>Original Kenny voice</span>
+        <span>Voice + typed answers</span>
+        <span>Gemini validation</span>
+        <span>Hot / warm / cold scoring</span>
+        <span>Dashboard + CSV export</span>
+      </div>
     </section>
 
-    <section class="panel">
+    <section class="flow-section" aria-labelledby="flowTitle">
+      <div class="section-kicker">How the demo works</div>
+      <h2 id="flowTitle">A clear qualification flow</h2>
+      <ol class="flow-list">
+        <li><span class="flow-number">1</span><div><strong>Secure access</strong><p>Enter your details and the private demo access code.</p></div></li>
+        <li><span class="flow-number">2</span><div><strong>Incoming call</strong><p>Your screen rings like a mobile call. Answer when you are ready.</p></div></li>
+        <li><span class="flow-number">3</span><div><strong>Qualification</strong><p>Kenny asks about buying or leasing, purpose, preferred area, budget, timeline, payment, and WhatsApp.</p></div></li>
+        <li><span class="flow-number">4</span><div><strong>Flexible replies</strong><p>Speak naturally or type. Typed submissions always take priority.</p></div></li>
+        <li><span class="flow-number">5</span><div><strong>Analysis and routing</strong><p>Answers are validated, the lead is scored, saved to the dashboard, and emailed to the team.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="edge-cases">
+      <div class="section-kicker">Built for real conversations</div>
+      <div class="edge-grid">
+        <article><strong>Unclear answer</strong><p>Kenny plays alternating clarification prompts and listens again.</p></article>
+        <article><strong>“Please repeat”</strong><p>The current question is replayed only when the caller asks for it.</p></article>
+        <article><strong>No speech</strong><p>The microphone remains available for up to seven seconds, with typing always available.</p></article>
+        <article><strong>End call</strong><p>Audio and listening stop immediately, then available answers are saved.</p></article>
+      </div>
+    </section>
+
+    <section class="call-card" id="callCard" aria-labelledby="callCardTitle">
+      <div class="call-card-heading">
+        <div>
+          <div class="section-kicker">Private demo</div>
+          <h2 id="callCardTitle">Call Kenny now</h2>
+          <p>Complete the secure form. Your details are not saved unless the access code is correct.</p>
+        </div>
+        <div id="micReadyBadge" class="secure-badge" hidden>Microphone ready</div>
+      </div>
+
       <form id="leadForm" novalidate>
-        <div class="field">
-          <label for="name">Full name</label>
-          <input id="name" name="name" type="text" autocomplete="name" required />
-        </div>
-        <div class="field">
-          <label for="phone">Phone number</label>
-          <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="+971..." required />
-        </div>
-        <div class="field">
-          <label for="email">Email <span>(optional)</span></label>
-          <input id="email" name="email" type="email" autocomplete="email" />
-        </div>
-        <div id="micReadyBadge" class="mic-ready-badge" hidden>Microphone ready</div>
-        <p class="step-help"><strong>Step 1 of 2:</strong> Save your details and confirm microphone access.</p>
-        <button id="submitButton" class="primary-button" type="submit">Save details & continue</button>
-      </form>
-
-      <section id="callArea" class="call-area" hidden>
-        <div class="call-copy">
-          <p class="eyebrow">Step 2 of 2 · Original Kenny audio</p>
-          <h2>You are ready to talk to Kenny</h2>
-          <p>Press <strong>Start call</strong>, then answer each question by <strong>typing or speaking</strong>. Typed answers are given priority when submitted.</p>
-        </div>
-
-        <div class="recorded-call-controls">
-          <button id="startCallButton" class="primary-button" type="button">Start call</button>
-          <button id="endCallButton" class="secondary-button" type="button" disabled>End call</button>
-        </div>
-
-        <div id="callState" class="call-state">Ready</div>
-
-        <div id="answerPanel" class="typed-fallback answer-panel" hidden>
-          <div class="answer-heading-row">
-            <div>
-              <label for="typedAnswer">Your answer</label>
-              <p id="answerHint" class="answer-hint">Type your answer or speak. A submitted typed answer takes priority.</p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="name">Full name</label>
+            <input id="name" name="name" type="text" autocomplete="name" placeholder="Your name" required />
+          </div>
+          <div class="field">
+            <label for="phone">Phone number</label>
+            <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="+971 50 123 4567" required />
+          </div>
+          <div class="field field-wide">
+            <label for="email">Email <span>(optional)</span></label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" />
+          </div>
+          <div class="field field-wide">
+            <label for="accessCode">Private access code</label>
+            <div class="access-input-wrap">
+              <input id="accessCode" name="accessCode" type="password" autocomplete="off" placeholder="Enter access code" required />
+              <button id="toggleAccessCode" type="button" class="text-button" aria-label="Show access code">Show</button>
             </div>
-            <span class="answer-mode-badge">Type + Voice</span>
           </div>
-          <div class="typed-row">
-            <input id="typedAnswer" type="text" autocomplete="off" placeholder="Type your answer here..." />
-            <button id="submitTypedAnswer" class="primary-button answer-submit" type="button">Submit answer</button>
-          </div>
-          <button id="retryVoiceButton" class="voice-retry-button" type="button" hidden>🎙 Listen again</button>
         </div>
-
-        <div class="transcript-card">
-          <h3>Live call notes</h3>
-          <pre id="liveTranscript">The conversation will appear here.</pre>
-        </div>
-      </section>
+        <button id="submitButton" class="primary-button call-now-button" type="submit">Call me now</button>
+        <p class="privacy-note">🔒 Access-controlled demo. Invalid or missing codes cannot create a lead or start a call.</p>
+      </form>
 
       <div id="status" class="status" role="status" aria-live="polite"></div>
     </section>
   </main>
 
+  <div id="micGate" class="mic-gate mic-gate-hidden" role="dialog" aria-modal="true" aria-labelledby="micGateTitle">
+    <div class="mic-gate-card">
+      <div class="mic-icon" aria-hidden="true">🎙️</div>
+      <p class="section-kicker">One quick setup</p>
+      <h2 id="micGateTitle">Enable your microphone</h2>
+      <p id="micGateText">Choose Allow so Kenny can understand spoken answers. You can still type every reply.</p>
+      <button id="micPermissionButton" class="primary-button" type="button">Enable microphone</button>
+      <button id="continueTypingOnly" class="secondary-button" type="button">Continue with typing only</button>
+      <p id="micHelp" class="mic-help" hidden></p>
+    </div>
+  </div>
+
+  <section id="incomingCall" class="phone-overlay" hidden aria-label="Incoming call from Kenny">
+    <div class="phone-device incoming-device">
+      <div class="phone-statusbar"><span id="incomingClock">Incoming call</span><span>● ● ●</span></div>
+      <div class="caller-avatar pulse-rings"><span>K</span></div>
+      <p class="call-label">Falcon Heights Abu Dhabi</p>
+      <h2>Kenny</h2>
+      <p id="ringingText" class="ringing-text">Incoming voice call…</p>
+      <div class="incoming-actions">
+        <button id="declineIncomingButton" class="round-call-button decline" type="button"><span>✕</span><small>Decline</small></button>
+        <button id="answerIncomingButton" class="round-call-button answer" type="button"><span>☎</span><small>Answer</small></button>
+      </div>
+    </div>
+  </section>
+
+  <section id="callArea" class="phone-overlay" hidden aria-label="Active call with Kenny">
+    <div class="phone-device active-device">
+      <div class="phone-statusbar"><span id="callTimer">00:00</span><span>Secure demo</span></div>
+      <div class="active-call-head">
+        <div class="caller-avatar small"><span>K</span></div>
+        <div><p>Falcon Heights Abu Dhabi</p><h2>Kenny</h2></div>
+      </div>
+
+      <div id="callState" class="call-state">Connected</div>
+      <div class="audio-visualizer" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+
+      <div id="answerPanel" class="answer-panel" hidden>
+        <div class="answer-heading-row">
+          <div>
+            <label for="typedAnswer">Your answer</label>
+            <p id="answerHint" class="answer-hint">Speak or type below. Typed submission has priority.</p>
+          </div>
+          <span class="answer-mode-badge">Voice + Type</span>
+        </div>
+        <div class="typed-row">
+          <input id="typedAnswer" type="text" autocomplete="off" placeholder="Type your answer…" />
+          <button id="submitTypedAnswer" class="primary-button answer-submit" type="button">Send</button>
+        </div>
+        <button id="retryVoiceButton" class="voice-retry-button" type="button" hidden>🎙 Listen again</button>
+      </div>
+
+      <details class="transcript-card">
+        <summary>Live call notes</summary>
+        <pre id="liveTranscript">The conversation will appear here.</pre>
+      </details>
+
+      <button id="endCallButton" class="end-call-button" type="button" disabled><span>☎</span> End call</button>
+      <button id="startCallButton" type="button" hidden>Start call</button>
+    </div>
+  </section>
+
+  <audio id="ringtone" src="/audio/incoming-ring.wav" preload="auto" loop></audio>
+  <footer>Falcon Heights Abu Dhabi · Private Lead Qualification Demo</footer>
   <script src="/app.js" defer></script>
 </body>
 </html>

@@ -336,14 +336,38 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
+app.post("/api/demo-access", (req, res) => {
+  const expectedAccessCode = String(process.env.DEMO_ACCESS_CODE || "LEAD2026").trim();
+  const suppliedAccessCode = String(req.body?.accessCode || "").trim();
+
+  if (!suppliedAccessCode || suppliedAccessCode.toLowerCase() !== expectedAccessCode.toLowerCase()) {
+    return res.status(403).json({
+      success: false,
+      message: "Invalid access code. No details were saved and no call was started."
+    });
+  }
+
+  res.json({ success: true, message: "Access approved." });
+});
+
 app.post("/api/leads", async (req, res) => {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, accessCode } = req.body;
+    const expectedAccessCode = String(process.env.DEMO_ACCESS_CODE || "LEAD2026").trim();
+    const suppliedAccessCode = String(accessCode || "").trim();
 
-    if (!name || !phone) {
+    if (!name || !phone || !suppliedAccessCode) {
       return res.status(400).json({
         success: false,
-        message: "Name and phone are required."
+        message: "Name, phone, and access code are required."
+      });
+    }
+
+    if (suppliedAccessCode.toLowerCase() !== expectedAccessCode.toLowerCase()) {
+      console.warn("Blocked demo access attempt for phone:", String(phone).trim());
+      return res.status(403).json({
+        success: false,
+        message: "Invalid access code. No details were saved and no call was started."
       });
     }
 

@@ -1,0 +1,13 @@
+Kenny Original Voice Agent v15
+
+- Falcon Heights Abu Dhabi branding.
+- New uploaded opening recording installed as public/audio/01-opening.mp3.
+- Server-enforced access code. Default: LEAD2026.
+- Invalid/missing access code creates no lead and starts no call.
+- Incoming mobile-call screen with ringtone and Answer/Decline controls.
+- Answer connects directly to Kenny; no second Start button.
+- Voice + typed answers. Typed answer submission has priority.
+- Voice listening window: up to 7 seconds; final speech is processed immediately.
+- Responsive desktop/mobile UI.
+- Existing dual Gemini keys, retries, private provider errors, MongoDB, Brevo,
+  deterministic scoring, dashboard delete, and CSV export are preserved.
