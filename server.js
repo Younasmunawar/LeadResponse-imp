@@ -317,7 +317,7 @@ app.post("/api/validate-answer", async (req, res) => {
 
   const key = String(questionKey);
   const rawAnswer = String(answer);
-  const local = validateAnswerLocally(key, rawAnswer);
+  const local = validateAnswerLocally(key, rawAnswer, req.body?.context || {});
 
   // High-confidence local answers are accepted or rejected immediately.
   // Gemini is only used for genuinely ambiguous answers.
@@ -366,7 +366,7 @@ app.get("/health", (_req, res) => {
     geminiConfigured: getGeminiKeyCount() > 0,
     geminiKeyCount: getGeminiKeyCount(),
     ...getGeminiPoolInfo(),
-    validationTimeoutMs: Number(process.env.GEMINI_VALIDATION_TIMEOUT_MS || 2000),
+    validationTimeoutMs: Number(process.env.GEMINI_VALIDATION_TIMEOUT_MS || 3500),
     finalizationTimeoutMs: Number(process.env.GEMINI_FINALIZATION_TIMEOUT_MS || 5000),
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     time: new Date().toISOString()

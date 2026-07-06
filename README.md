@@ -82,3 +82,25 @@ Gemini still has meaningful authority:
 2. It classifies ambiguous answers as positive/neutral/negative/irrelevant.
 3. During finalization, it reviews the full transcript, recommends quality, and supplies a confidence score.
 4. A high-confidence Gemini recommendation can move a borderline lead by one band, but cannot override a hard negative such as “do not contact”.
+
+## v20 local directory and live-validation latency update
+
+- Expanded local positive, neutral, negative, and irrelevant answer coverage for every live question.
+- Added more Abu Dhabi area aliases, property types, spoken-budget formats, timeline phrases, speech-recognition variants, contact preferences, and stop-contact phrases.
+- Live Gemini validation now uses only two validation keys.
+- Each validation key has a 3.5-second hard timeout, so ambiguous-answer AI wait is capped at 7 seconds.
+- HTTP 429 quota errors stop the key chain immediately and return strict local fallback instead of trying another key.
+- Timeout and quota events remain in server logs and are never shown to the caller.
+- The frontend sends existing call context to local validation so budget classification can consider whether the lead is buying or leasing.
+- Final analysis continues to use the two separate finalization keys.
+
+Recommended variables:
+
+```env
+GEMINI_VALIDATION_KEY_1=
+GEMINI_VALIDATION_KEY_2=
+GEMINI_VALIDATION_TIMEOUT_MS=3500
+GEMINI_FINALIZATION_KEY_1=
+GEMINI_FINALIZATION_KEY_2=
+GEMINI_FINALIZATION_TIMEOUT_MS=5000
+```

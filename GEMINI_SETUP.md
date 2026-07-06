@@ -97,3 +97,14 @@ Optional settings:
 GEMINI_RETRY_ROUNDS=3
 GEMINI_RETRY_DELAY_MS=5000
 ```
+
+
+## v20 live answer validation policy
+
+1. Local validation runs first.
+2. Only ambiguous answers call Gemini.
+3. Validation key 1 receives up to 3.5 seconds.
+4. On timeout/network/invalid response, validation key 2 receives up to 3.5 seconds.
+5. On HTTP 429 from either validation key, the chain stops immediately and strict local fallback is returned.
+6. The browser never receives provider error details.
+7. Final analysis still uses two separate finalization keys.

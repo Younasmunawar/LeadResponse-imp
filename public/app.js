@@ -530,7 +530,14 @@ async function validateAnswerForStep(step, rawAnswer, attempt, previousAttempts 
     questionLabel: step.label,
     answer: rawAnswer,
     attempt,
-    previousAttempts
+    previousAttempts,
+    context: {
+      intent: answers.intent || "unknown",
+      purpose: answers.purpose || "unknown",
+      preferredArea: answers.preferredArea || "unknown",
+      budget: answers.budget || "unknown",
+      timeline: answers.timeline || "unknown"
+    }
   });
   return result.validation;
 }

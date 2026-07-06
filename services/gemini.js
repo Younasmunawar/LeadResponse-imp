@@ -8,10 +8,9 @@ function validationKeys() {
   return unique([
     process.env.GEMINI_VALIDATION_KEY_1,
     process.env.GEMINI_VALIDATION_KEY_2,
-    process.env.GEMINI_VALIDATION_KEY_3,
     process.env.GEMINI_API_KEY_PRIMARY,
     process.env.GEMINI_API_KEY_SECONDARY
-  ]).slice(0, 3);
+  ]).slice(0, 2);
 }
 
 function finalizationKeys() {
@@ -46,44 +45,94 @@ function createTimeoutController(timeoutMs) {
 
 async function requestSequential({ keys, requestBody, model, timeoutPerKeyMs, operation }) {
   if (!keys.length) throw new Error(`No Gemini keys configured for ${operation}.`);
+
   const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
   let lastError = null;
 
   for (let index = 0; index < keys.length; index += 1) {
     const keyLabel = `${operation}-key-${index + 1}`;
     const timeout = createTimeoutController(timeoutPerKeyMs);
+
     try {
       console.log(`Gemini ${operation}: trying ${keyLabel} with ${timeoutPerKeyMs}ms timeout.`);
+
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": keys[index] },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": keys[index]
+        },
         body: JSON.stringify(requestBody),
         signal: timeout.controller.signal
       });
+
       const raw = await response.text();
       let payload = {};
-      try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { rawBody: raw }; }
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch {
+        payload = { rawBody: raw };
+      }
+
       if (!response.ok) {
-        const error = new Error(payload?.error?.message || `Gemini returned HTTP ${response.status}`);
+        const error = new Error(
+          payload?.error?.message || `Gemini returned HTTP ${response.status}`
+        );
         error.status = response.status;
+        error.payload = payload;
+
+        // Do not spend more live-call time on another key after an explicit
+        // quota response. The API route will immediately use local fallback.
+        if (response.status === 429) {
+          error.code = "GEMINI_QUOTA_EXCEEDED";
+          console.error("GEMINI_QUOTA_EXCEEDED:", {
+            operation,
+            keyLabel,
+            status: 429,
+            message: error.message
+          });
+          throw error;
+        }
+
         throw error;
       }
+
       console.log(`Gemini ${operation}: ${keyLabel} succeeded.`);
       return { payload, keyLabel };
     } catch (error) {
       lastError = error;
-      console.error("GEMINI_REQUEST_ERROR:", {
-        operation,
-        keyLabel,
-        status: error?.status || 0,
-        name: error?.name,
-        message: error?.message
-      });
+
+      if (error?.code === "GEMINI_QUOTA_EXCEEDED" || error?.status === 429) {
+        // Stop the key chain immediately. The caller will return local fallback.
+        throw error;
+      }
+
+      if (error?.name === "AbortError") {
+        console.warn("GEMINI_TIMEOUT:", {
+          operation,
+          keyLabel,
+          timeoutMs: timeoutPerKeyMs
+        });
+      } else {
+        console.error("GEMINI_REQUEST_ERROR:", {
+          operation,
+          keyLabel,
+          status: error?.status || 0,
+          name: error?.name,
+          message: error?.message
+        });
+      }
     } finally {
       timeout.clear();
     }
   }
-  throw new Error(`All Gemini ${operation} keys failed: ${lastError?.message || "unknown error"}`);
+
+  const error = new Error(
+    `All Gemini ${operation} keys failed: ${lastError?.message || "unknown error"}`
+  );
+  error.code = lastError?.code || "GEMINI_ALL_KEYS_FAILED";
+  error.cause = lastError;
+  throw error;
 }
 
 function safeText(value, fallback = "unknown") {
@@ -212,7 +261,7 @@ Return only JSON.
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: validationResponseSchema }
   };
-  const timeoutMs = Math.max(500, Number(process.env.GEMINI_VALIDATION_TIMEOUT_MS || 2000));
+  const timeoutMs = Math.max(1000, Number(process.env.GEMINI_VALIDATION_TIMEOUT_MS || 3500));
   const { payload, keyLabel } = await requestSequential({
     keys: validationKeys(), requestBody, model, timeoutPerKeyMs: timeoutMs, operation: `validation-${questionKey}`
   });

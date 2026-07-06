@@ -1,0 +1,20 @@
+Kenny Original Voice Agent v20
+
+Live validation changes
+- Local validation remains first and now has a much larger phrase directory.
+- Only two Gemini validation keys are used.
+- Each validation key has a 3.5-second hard timeout.
+- Timeout/network/invalid-response errors may move to the second key.
+- HTTP 429 quota errors stop the Gemini validation chain immediately.
+- When Gemini validation cannot be used, strict local fallback is returned without showing a provider error to the caller.
+- Final analysis continues to use the two dedicated finalization keys.
+
+Local validation enhancements
+- More consent, refusal, busy, cautious-consent, and repeat-question phrases.
+- More purchase, lease, personal, family, business, and investment variants.
+- Expanded Abu Dhabi area aliases and property types.
+- More numeric, ranged, and spoken budget formats.
+- Existing intent is used to assess whether a budget is positive, neutral, or negative.
+- More timeline phrases and common speech-recognition variants.
+- More payment, WhatsApp, alternate-contact, and follow-up-time phrases.
+- More hard-negative and clearly unrelated phrases.
