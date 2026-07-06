@@ -88,6 +88,27 @@ function setCallState(message) {
   callState.textContent = message;
 }
 
+function closeCallInterface(message = "Call complete.") {
+  stopRingtone();
+  stopActiveAudio();
+  stopRecognition();
+  cancelPendingAnswer();
+  stopCallTimer();
+  callArea.hidden = true;
+  incomingCall.hidden = true;
+  answerPanel.hidden = true;
+  document.body.style.overflow = "";
+  callTimer.textContent = "00:00";
+  setCallState("Connected");
+  form.hidden = false;
+  submitButton.disabled = false;
+  currentLeadId = "";
+  if (message) setStatus(message);
+  window.setTimeout(() => {
+    document.getElementById("callCard")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 80);
+}
+
 async function postJson(url, payload, method = "POST") {
   const response = await fetch(url, {
     method,
@@ -810,10 +831,7 @@ async function finishDeclinedCall(reason) {
       declinedAtOpening: true
     });
 
-    setStatus(result.message || "Call ended and response saved.");
-    setCallState("Completed");
-    stopCallTimer();
-    document.body.style.overflow = "";
+    closeCallInterface(result.message || "Call ended and response saved.");
   } catch (error) {
     setStatus(`Call ended, but saving failed: ${error.message}`, true);
     setCallState("Save failed");
@@ -877,10 +895,7 @@ async function finishRecordedCall(offScript = false) {
       callerSentiment: offScript ? "neutral" : "positive"
     });
 
-    setStatus(result.message || "Lead saved and email processed.");
-    setCallState("Completed");
-    stopCallTimer();
-    document.body.style.overflow = "";
+    closeCallInterface(result.message || "Lead saved and email processed.");
   } catch (error) {
     setStatus(`Call ended, but saving failed: ${error.message}`, true);
     setCallState("Save failed");
@@ -920,10 +935,7 @@ async function endCallImmediately(event) {
       callerSentiment: "neutral",
       manuallyEnded: true
     });
-    setStatus(result.message || "Call ended and available answers were saved.");
-    setCallState("Ended");
-    stopCallTimer();
-    document.body.style.overflow = "";
+    closeCallInterface(result.message || "Call ended and available answers were saved.");
   } catch (error) {
     setStatus(`Call stopped, but saving failed: ${error.message}`, true);
     setCallState("Save failed");

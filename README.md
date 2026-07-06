@@ -22,3 +22,8 @@ npm install
 npm run check
 npm start
 ```
+
+## v16 interface fixes
+- Restored complete responsive dashboard styling.
+- Active call interface now closes automatically after a completed call, declined flow, or manual End Call save.
+- Expanded the public feature explanation for accessible voice and typed responses.
